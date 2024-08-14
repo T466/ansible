@@ -1,0 +1,9 @@
+- name: Atualizar todos os pacotes
+  hosts: all
+  become: yes
+  tasks:
+    - name: Atualizar todos os pacotes do sistema
+      dnf:
+        name: "*"
+        state: latest
+
