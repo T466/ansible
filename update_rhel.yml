@@ -2,9 +2,6 @@
   hosts: all
   become: yes
   tasks:
-    - name: Coletar fatos do sistema
-      setup:
-
     - name: Exibir fatos do sistema
       debug:
         var: ansible_facts
