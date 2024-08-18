@@ -1,0 +1,26 @@
+- name: Criar uma instância no Azure
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Criar uma máquina virtual no Azure
+      azure.azcollection.azure_rm_virtualmachine:
+        resource_group: "MeuResourceGroup"          # Nome do grupo de recursos
+        name: "MinhaVM"                             # Nome da máquina virtual
+        vm_size: "Standard_B1s"                     # Tamanho da máquina virtual
+        admin_username: "azureuser"                 # Nome de usuário do administrador
+        admin_password: "SenhaComplexa123!"         # Senha do administrador
+        image:
+          offer: "UbuntuServer"                     # Oferta da imagem
+          publisher: "Canonical"                    # Publicador da imagem
+          sku: "18.04-LTS"                          # SKU da imagem
+          version: "latest"                         # Versão da imagem
+        network_interfaces:
+          - name: "MinhaNIC"                        # Nome da interface de rede
+            primary: yes
+        location: "East US"                         # Região onde a VM será criada
+        state: present
+      register: vm
+
+    - name: Exibir informações da instância
+      debug:
+        msg: "Máquina virtual criada com ID: {{ vm.id }}"
