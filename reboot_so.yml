@@ -1,0 +1,7 @@
+- name: Reboot do servidor
+  hosts: all
+  become: yes
+  tasks:
+    - name: Reboot do servidor
+      reboot:
+        reboot_timeout: 600  # Tempo máximo de espera para o reboot (em segundos)
