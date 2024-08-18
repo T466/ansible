@@ -4,4 +4,4 @@
   tasks:
     - name: Reboot do servidor
       reboot:
-        reboot_timeout: 600  # Tempo máximo de espera para o reboot (em segundos)
+        reboot_timeout: 120  # Tempo máximo de espera para o reboot (em segundos)
