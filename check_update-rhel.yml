@@ -1,0 +1,18 @@
+- name: Validar se o servidor foi atualizado
+  hosts: all
+  become: yes
+  tasks:
+    - name: Verificar a versão do sistema
+      command: uname -r
+      register: kernel_version
+
+    - name: Exibir a versão do kernel
+      debug:
+        msg: "Versão do kernel: {{ kernel_version.stdout }}"
+
+    - name: Verificar se a versão do sistema está atualizada
+      assert:
+        that:
+          - "'5.15' in kernel_version.stdout"  # Substitua com a versão esperada do kernel ou outro critério de validação
+        fail_msg: "O servidor não foi atualizado corretamente."
+        success_msg: "O servidor foi atualizado corretamente."
