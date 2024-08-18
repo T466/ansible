@@ -1,0 +1,13 @@
+- name: Create snapshot in VMware
+  hosts: localhost
+  tasks:
+    - name: Create snapshot
+      community.vmware.vm_vm_snapshot:
+        hostname: "{{ vmware_hostname }}"
+        username: "{{ vmware_username }}"
+        password: "{{ vmware_password }}"
+        validate_certs: no
+        name: "{{ vm_name }}"
+        snapshot_name: "pre-update-snapshot"
+        state: present
+      delegate_to: localhost
