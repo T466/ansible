@@ -1,0 +1,21 @@
+- name: Criar uma instância EC2 na AWS
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Criar uma nova instância EC2
+      amazon.aws.ec2_instance:
+        name: "MinhaInstancia"
+        key_name: "minha-chave-ssh"         # Nome da chave SSH para acesso à instância
+        instance_type: "t2.micro"           # Tipo da instância
+        image_id: "ami-0abcdef1234567890"   # ID da imagem AMI (substitua pelo ID da sua AMI)
+        region: "us-west-2"                  # Região onde a instância será criada
+        wait: yes                            # Aguarde até a instância estar disponível
+        count: 1                            # Número de instâncias a serem criadas
+        vpc_subnet_id: "subnet-0abcdef1234567890"  # ID da sub-rede VPC
+        security_group: "sg-0abcdef1234567890"     # ID do grupo de segurança
+        assign_public_ip: yes                # Atribuir um IP público à instância
+      register: ec2
+
+    - name: Exibir informações da instância
+      debug:
+        msg: "Instância EC2 criada com ID: {{ ec2.instances[0].id }}"
