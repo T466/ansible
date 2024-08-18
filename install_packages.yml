@@ -1,0 +1,9 @@
+---
+
+- name: Install packages
+  hosts: all
+  tasks:
+    - name: YUM | Install packages
+      yum: name={{ packages }} state=latest
+      when: ansible_distribution == "CentOS" or ansible_distribution == "RedHat"
+...
