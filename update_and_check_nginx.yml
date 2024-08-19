@@ -10,12 +10,12 @@
 
     - name: Reboot the server
       reboot:
-        reboot_timeout: 600  # Tempo máximo para aguardar o reboot, ajuste conforme necessário
+        reboot_timeout: 130  # Tempo máximo para aguardar o reboot, ajuste conforme necessário
 
     - name: Wait for the server to come back online
       wait_for:
         port: 22  # Porta padrão para SSH, ajuste se necessário
-        timeout: 300  # Tempo máximo para aguardar a reconexão, ajuste conforme necessário
+        timeout: 130  # Tempo máximo para aguardar a reconexão, ajuste conforme necessário
 
     - name: Check if Nginx service is active
       command: systemctl is-active nginx
