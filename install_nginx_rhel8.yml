@@ -1,0 +1,31 @@
+- name: Verificar e instalar o Nginx no Oracle Linux 8
+  hosts: all
+  become: yes
+  tasks:
+    - name: Verificar se o Nginx está instalado
+      dnf:
+        name: nginx
+        state: present
+      register: nginx_installation
+
+    - name: Instalar o Nginx se não estiver instalado
+      dnf:
+        name: nginx
+        state: present
+      when: nginx_installation.changed
+
+    - name: Iniciar o serviço Nginx
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+      when: nginx_installation.changed
+
+    - name: Exibir status do Nginx
+      command: systemctl status nginx
+      register: nginx_status
+      ignore_errors: yes
+
+    - name: Mostrar informações sobre o status do Nginx
+      debug:
+        msg: "{{ nginx_status.stdout }}"
