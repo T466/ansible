@@ -1,0 +1,38 @@
+---
+- name: Atualizar sistema, reiniciar e garantir que o Nginx esteja ativo após reboot
+  hosts: all
+  become: yes
+  tasks:
+    - name: Atualizar todos os pacotes do sistema
+      dnf:
+        name: "*"
+        state: latest
+
+    - name: Reboot the server
+      reboot:
+        reboot_timeout: 600  # Tempo máximo para aguardar o reboot, ajuste conforme necessário
+
+    - name: Wait for the server to come back online
+      wait_for:
+        port: 22  # Porta padrão para SSH, ajuste se necessário
+        timeout: 300  # Tempo máximo para aguardar a reconexão, ajuste conforme necessário
+
+    - name: Check if Nginx service is active
+      command: systemctl is-active nginx
+      register: nginx_status
+      ignore_errors: yes
+
+    - name: Start Nginx if not active
+      service:
+        name: nginx
+        state: started
+      when: nginx_status.stdout != "active"
+
+    - name: Verify Nginx status
+      command: systemctl status nginx
+      register: nginx_status_post_start
+      ignore_errors: yes
+
+    - name: Show Nginx status
+      debug:
+        msg: "{{ nginx_status_post_start.stdout }}"
