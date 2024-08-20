@@ -1,0 +1,28 @@
+---
+- name: Configurar multipath
+  hosts: all
+  become: yes
+  vars:
+    multipath_entries: []
+
+  tasks:
+    - name: Backup do arquivo de configuração atual
+      ansible.builtin.copy:
+        src: /etc/multipath.conf
+        dest: /etc/multipath.conf.bak
+        remote_src: yes
+      ignore_errors: yes
+
+    - name: Criar novo arquivo de configuração do multipath
+      ansible.builtin.template:
+        src: multipath.conf.j2
+        dest: /etc/multipath.conf
+
+    - name: Reiniciar o serviço multipathd
+      ansible.builtin.systemd:
+        name: multipathd
+        state: restarted
+
+    - name: Forçar reescaneamento dos dispositivos multipath
+      ansible.builtin.command:
+        cmd: multipath -r
