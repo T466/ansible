@@ -1,0 +1,8 @@
+multipaths {
+{% for entry in multipath_entries %}
+    multipath {
+        wwid "{{ entry.wwid }}"
+        alias "{{ entry.alias }}"
+    }
+{% endfor %}
+}
