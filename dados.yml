@@ -1,0 +1,16 @@
+---
+- name: Coletar e Filtrar Fatos do Sistema
+  hosts: all
+  gather_facts: yes
+  tasks:
+    - name: Exibir informações do Sistema Operacional
+      debug:
+        msg: "Sistema Operacional: {{ ansible_facts['os_family'] }} {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
+
+    - name: Exibir informações da CPU
+      debug:
+        msg: "CPU: {{ ansible_facts['processor_cores'] }} núcleos, {{ ansible_facts['processor'][0] }} modelo"
+
+    - name: Exibir informações de Memória
+      debug:
+        msg: "Memória Total: {{ ansible_facts['memtotal_mb'] }} MB"
