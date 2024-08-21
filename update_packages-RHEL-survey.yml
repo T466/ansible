@@ -1,0 +1,29 @@
+---
+- name: Atualizar pacotes
+  hosts: all
+  become: yes
+  vars:
+    # Converta a variável de string separada por vírgulas em uma lista
+    packages_to_update: "{{ packages_to_update_string.split(',') | map('trim') | list }}"
+  tasks:
+    - name: Atualizar pacotes no CentOS/RHEL 7
+      yum:
+        name: "{{ item }}"
+        state: latest
+      when: ansible_distribution in ['CentOS', 'RedHat'] and ansible_distribution_major_version == '7'
+      loop: "{{ packages_to_update }}"
+      register: update_result
+
+    - name: Atualizar pacotes no CentOS/RHEL 8+
+      dnf:
+        name: "{{ item }}"
+        state: latest
+      when: ansible_distribution in ['CentOS', 'RedHat'] and ansible_distribution_major_version == '8'
+      loop: "{{ packages_to_update }}"
+      register: update_result
+
+    - name: Exibir resultado da atualização dos pacotes
+      debug:
+        msg: "Pacote {{ item.item }} foi atualizado com sucesso."
+      when: item.changed
+      loop: "{{ update_result.results }}"
