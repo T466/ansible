@@ -1,0 +1,22 @@
+---
+- name: Atualizar pacotes Rhel 8
+  hosts: all
+  become: yes
+  vars:
+    packages_to_update:
+      - vim
+      - httpd
+      - nginx
+  tasks:
+    - name: Atualizar os pacotes especificados
+      dnf:
+        name: "{{ item }}"
+        state: latest
+      loop: "{{ packages_to_update }}"
+      register: update_result
+
+    - name: Exibir resultado da atualização dos pacotes
+      debug:
+        msg: "Pacote {{ item.name }} foi atualizado com sucesso."
+      when: item.changed
+      loop: "{{ update_result.results }}"
