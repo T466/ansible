@@ -1,12 +1,10 @@
 ---
-- name: Atualizar pacotes Rhel 8
+- name: Atualizar pacotes no Oracle Linux
   hosts: all
   become: yes
   vars:
-    packages_to_update:
-      - vim
-      - httpd
-      - nginx
+    # Converta a variável de string separada por vírgulas em uma lista
+    packages_to_update: "{{ packages_to_update_string.split(',') | map('trim') | list }}"
   tasks:
     - name: Atualizar os pacotes especificados
       dnf:
@@ -17,6 +15,6 @@
 
     - name: Exibir resultado da atualização dos pacotes
       debug:
-        msg: "Pacote {{ item.name }} foi atualizado com sucesso."
+        msg: "Pacote {{ item.item }} foi atualizado com sucesso."
       when: item.changed
       loop: "{{ update_result.results }}"
