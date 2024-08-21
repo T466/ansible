@@ -1,20 +1,9 @@
 ---
-- name: Atualizar pacotes no Oracle Linux
-  hosts: all
-  become: yes
-  vars:
-    # Converta a variável de string separada por vírgulas em uma lista
-    packages_to_update: "{{ packages_to_update_string.split(',') | map('trim') | list }}"
-  tasks:
-    - name: Atualizar os pacotes especificados
-      dnf:
-        name: "{{ item }}"
-        state: latest
-      loop: "{{ packages_to_update }}"
-      register: update_result
 
-    - name: Exibir resultado da atualização dos pacotes
-      debug:
-        msg: "Pacote {{ item.item }} foi atualizado com sucesso."
-      when: item.changed
-      loop: "{{ update_result.results }}"
+- name: Install packages
+  hosts: all
+  tasks:
+    - name: YUM | Install packages
+      yum: name={{ packages }} state=latest
+      when: ansible_distribution == "CentOS" or ansible_distribution == "RedHat"
+...
