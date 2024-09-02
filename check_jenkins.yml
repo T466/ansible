@@ -1,0 +1,54 @@
+---
+- name: Validar servidores com Jenkins
+  hosts: all
+  become: yes
+  tasks:
+    - name: Verificar se o Jenkins está instalado
+      command: which jenkins
+      register: jenkins_path
+      ignore_errors: yes
+
+    - name: Validar se o Jenkins está rodando
+      systemd:
+        name: jenkins
+        state: started
+      register: jenkins_status
+      when: jenkins_path.stdout != ""
+
+    - name: Verificar a porta em que o Jenkins está escutando
+      command: netstat -tuln | grep jenkins || ss -tuln | grep jenkins
+      register: jenkins_port
+      when: jenkins_path.stdout != ""
+
+    - name: Encontrar o arquivo de configuração do Jenkins
+      find:
+        paths: /etc/jenkins
+        patterns: jenkins.xml
+      register: jenkins_config
+      when: jenkins_path.stdout != ""
+
+    - name: Obter a localização dos logs do Jenkins
+      command: grep -i '^LOGGING' /etc/sysconfig/jenkins || grep -i '^JENKINS_LOG' /etc/sysconfig/jenkins
+      register: jenkins_logs
+      when: jenkins_path.stdout != ""
+
+    - name: Mostrar informações coletadas
+      debug:
+        msg:
+          - "Jenkins Path: {{ jenkins_path.stdout }}"
+          - "Jenkins Status: {{ jenkins_status }}"
+          - "Jenkins Port: {{ jenkins_port.stdout }}"
+          - "Jenkins Config File: {{ jenkins_config.files | map(attribute='path') | list }}"
+          - "Jenkins Logs: {{ jenkins_logs.stdout }}"
+      when: jenkins_path.stdout != ""
+
+    - name: Verificar serviços com os quais o Jenkins se comunica
+      command: netstat -plant | grep ':8080' || ss -plant | grep ':8080'
+      register: jenkins_connections
+      when: jenkins_path.stdout != ""
+
+    - name: Mostrar conexões do Jenkins
+      debug:
+        msg:
+          - "Jenkins Connections: {{ jenkins_connections.stdout }}"
+      when: jenkins_path.stdout != ""
