@@ -1,3 +1,4 @@
+---
 - name: Validar se o servidor foi atualizado
   hosts: all
   become: yes
@@ -16,3 +17,20 @@
           - "'5.15' in kernel_version.stdout"  # Substitua com a versão esperada do kernel ou outro critério de validação
         fail_msg: "O servidor não foi atualizado corretamente."
         success_msg: "O servidor foi atualizado corretamente."
+
+    - name: Executar 'yum list updates' para verificar pacotes a serem atualizados
+      command: yum list updates
+      register: yum_updates_output
+      changed_when: false
+
+    - name: Exibir o resultado do comando 'yum list updates'
+      debug:
+        msg: "{{ yum_updates_output.stdout }}"
+
+    - name: Verificar se há pacotes a serem atualizados
+      assert:
+        that:
+          - "'No packages marked for update' in yum_updates_output.stdout"
+        fail_msg: "Há pacotes disponíveis para atualização: {{ yum_updates_output.stdout }}"
+        success_msg: "Todos os pacotes estão atualizados."
+
