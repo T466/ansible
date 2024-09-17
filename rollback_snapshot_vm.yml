@@ -1,0 +1,21 @@
+---
+- name: Restaurar snapshots de VMs no VMware
+  hosts: localhost
+  gather_facts: no
+  vars_files:
+    - vars/vmware_vars.yml  # Arquivo de variáveis externas
+
+  tasks:
+    - name: Restaurar snapshot nas VMs especificadas no inventário
+      community.vmware.vm_snapshot:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: "{{ validate_certs }}"
+        vm_id: "{{ item.vm_id }}"
+        snapshot: "{{ snapshot_name }}"
+        state: present
+        snapshot_description: "Restaurado por Ansible"
+        revert: yes
+      loop: "{{ groups['snapshots'] | map('extract', hostvars, 'vm') | list }}"
+      delegate_to: localhost
