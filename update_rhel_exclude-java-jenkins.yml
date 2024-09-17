@@ -1,0 +1,27 @@
+---
+- name: Atualizar, exceto Java se o Jenkins estiver instalado
+  hosts: all
+  become: yes
+  tasks:
+    - name: Verificar se o Jenkins está instalado
+      command: rpm -q jenkins
+      register: jenkins_check
+      ignore_errors: yes
+
+    - name: Listar todos os pacotes instalados
+      command: yum list installed
+      register: installed_packages
+
+    - name: Atualizar todos os pacotes, exceto o Java se o Jenkins estiver instalado
+      yum:
+        name: "{{ item }}"
+        state: latest
+      loop: "{{ installed_packages.stdout_lines | select('match', '^java-') | list }}"
+      when: jenkins_check.rc != 0
+
+    - name: Atualizar todos os pacotes (incluindo Java) se o Jenkins não estiver instalado
+      yum:
+        name: "{{ item.name }}"
+        state: latest
+      loop: "{{ (installed_packages.stdout_lines | select('search', '^([a-zA-Z0-9_.-]+)\s') | list) | map('split', ' ', 1) | map('first') }}"
+      when: jenkins_check.rc == 0
