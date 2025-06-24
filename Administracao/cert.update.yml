@@ -1,0 +1,91 @@
+---
+- name: Extrair certificado e chave de arquivo .pfx e atualizar NGINX
+  hosts: localhost
+  become: true
+  vars:
+    caminho_pfx: /cert/cert1ano/certificado-1ano.pfx
+    senha_arquivo: /cert/cert1ano/pass.pass
+    destino_dir: /cert/cert1ano
+    nginx_ssl_dir: /etc/nginx/ssl
+    nginx_url_https: "https://localhost"
+
+  tasks:
+    - name: Ler a senha do arquivo
+      slurp:
+        src: "{{ senha_arquivo }}"
+      register: senha_codificada
+
+    - name: Definir variável com a senha decodificada
+      set_fact:
+        senha_pfx: "{{ senha_codificada['content'] | b64decode | trim }}"
+
+    - name: Garante que o diretório de destino existe
+      file:
+        path: "{{ destino_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Extrair chave privada do .pfx
+      command: >
+        openssl pkcs12 -in {{ caminho_pfx }}
+        -nocerts -nodes
+        -out {{ destino_dir }}/chave.key
+        -passin pass:{{ senha_pfx }}
+      args:
+        creates: "{{ destino_dir }}/chave.key"
+
+    - name: Extrair certificado (.crt) do .pfx
+      command: >
+        openssl pkcs12 -in {{ caminho_pfx }}
+        -clcerts -nokeys
+        -out {{ destino_dir }}/certificado.crt
+        -passin pass:{{ senha_pfx }}
+      args:
+        creates: "{{ destino_dir }}/certificado.crt"
+
+    - name: Verificar validade do certificado extraído
+      command: >
+        openssl x509 -in {{ destino_dir }}/certificado.crt -noout -dates
+      register: validade_cert
+
+    - name: Exibir validade do certificado
+      debug:
+        msg: "{{ validade_cert.stdout_lines }}"
+
+    - name: Faz backup do certificado atual do NGINX
+      command: mv {{ nginx_ssl_dir }}/certificado.crt {{ nginx_ssl_dir }}/certificado.crt-bkp
+      args:
+        removes: "{{ nginx_ssl_dir }}/certificado.crt"
+      ignore_errors: true
+
+    - name: Faz backup da chave atual do NGINX
+      command: mv {{ nginx_ssl_dir }}/chave.key {{ nginx_ssl_dir }}/chave.key-bkp
+      args:
+        removes: "{{ nginx_ssl_dir }}/chave.key"
+      ignore_errors: true
+
+    - name: Copiar novo certificado para o NGINX
+      copy:
+        src: "{{ destino_dir }}/certificado.crt"
+        dest: "{{ nginx_ssl_dir }}/certificado.crt"
+        mode: '0644'
+
+    - name: Copiar nova chave para o NGINX
+      copy:
+        src: "{{ destino_dir }}/chave.key"
+        dest: "{{ nginx_ssl_dir }}/chave.key"
+        mode: '0600'
+
+    - name: Reload do NGINX
+      service:
+        name: nginx
+        state: reloaded
+
+    - name: Verificar HTTPS com curl
+      command: >
+        curl -k -s -o /dev/null -w "HTTPS funcionando com código: %{http_code}\n" {{ nginx_url_https }}
+      register: resultado_curl
+
+    - name: Exibir resultado do teste HTTPS
+      debug:
+        msg: "{{ resultado_curl.stdout }}"
