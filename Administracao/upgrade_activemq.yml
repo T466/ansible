@@ -1,0 +1,67 @@
+---
+- name: Upgrade do Apache ActiveMQ
+  hosts: oracle-linux8
+  become: yes
+  vars:
+    activemq_base_dir: /opt/activemq
+    activemq_pkg_dir: /packet/activemq
+    activemq_tarball: apache-activemq-5.19.0-bin.tar.gz
+    activemq_version_new: apache-activemq-5.19.0
+    activemq_version_old: apache-activemq-5.18.0
+    activemq_link: /opt/activemq/current
+
+  tasks:
+    - name: Parar ActiveMQ
+      systemd:
+        name: activemq
+        state: stopped
+
+    - name: Garantir diretório de destino existe
+      file:
+        path: "{{ activemq_base_dir }}"
+        state: directory
+
+    - name: Extrair novo ActiveMQ
+      unarchive:
+        src: "{{ activemq_pkg_dir }}/{{ activemq_tarball }}"
+        dest: "{{ activemq_base_dir }}"
+        remote_src: yes
+        creates: "{{ activemq_base_dir }}/{{ activemq_version_new }}"
+
+    - name: Atualizar link simbólico para nova versão
+      file:
+        src: "{{ activemq_base_dir }}/{{ activemq_version_new }}"
+        dest: "{{ activemq_link }}"
+        state: link
+        force: yes
+
+    - name: Copiar arquivos de configuração da versão antiga
+      copy:
+        src: "{{ activemq_base_dir }}/{{ activemq_version_old }}/conf/"
+        dest: "{{ activemq_link }}/conf/"
+        remote_src: yes
+        mode: preserve
+        force: yes
+
+    - name: Copiar diretório de dados da versão antiga
+      copy:
+        src: "{{ activemq_base_dir }}/{{ activemq_version_old }}/data"
+        dest: "{{ activemq_link }}/"
+        remote_src: yes
+        force: yes
+
+    - name: Reiniciar o ActiveMQ
+      systemd:
+        name: activemq
+        state: started
+        enabled: yes
+
+    - name: Verificar se a porta 8161 está escutando (não-fatal)
+      shell: ss -tuln | grep 8161 || true
+      register: port_check
+      changed_when: false
+      ignore_errors: true
+
+    - name: Mostrar resultado da verificação da porta
+      debug:
+        msg: "{{ port_check.stdout_lines | default(['Porta 8161 não está escutando']) }}"
