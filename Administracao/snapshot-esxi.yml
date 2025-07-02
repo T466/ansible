@@ -1,0 +1,33 @@
+- name: Criar snapshot da VM via ESXi
+  hosts: localhost
+  gather_facts: false
+  collections:
+    - community.vmware
+
+  vars_files:
+    - secrets.yml  # Esse é o arquivo criptografado
+
+  vars:
+    datacenter_name: "Datacenter"
+    vm_folder: "/"
+    vm_name: "{{ vm_name }}"
+    snapshot_name: "{{ snap_name }}"
+    snapshot_description: "{{ snapshot_description }}"
+    memory_dump: false
+    quiesce: false
+
+  tasks:
+    - name: Criar snapshot da VM
+      community.vmware.vmware_guest_snapshot:
+        hostname: "{{ vcenter_hostname }}"
+        username: "{{ vcenter_username }}"
+        password: "{{ vcenter_password }}"
+        validate_certs: false
+        datacenter: "{{ datacenter_name }}"
+        folder: "{{ vm_folder }}"
+        name: "{{ vm_name }}"
+        snapshot_name: "{{ snapshot_name }}"
+        description: "{{ snapshot_description }}"
+        memory_dump: "{{ memory_dump }}"
+        quiesce: "{{ quiesce }}"
+        state: present
