@@ -1,0 +1,28 @@
+- name: Remover snapshots antigos no VMware
+  hosts: localhost
+  gather_facts: no
+  vars:
+    snapshot_age_days: 7
+    vm_filter: ".*"  # regex para filtrar nome das VMs (opcional)
+    tool: "govc"     # pode ser: govc, vim-cmd ou vmrun
+    log_path: "/var/log/ansible-vmware-snapshots.log"
+
+  tasks:
+    - name: Validar ferramenta selecionada
+      assert:
+        that: tool in ['govc', 'vim-cmd', 'vmrun']
+        fail_msg: " Ferramenta '{{ tool }}' inválida. Use govc, vim-cmd ou vmrun."
+
+    - name: Executar script para listar e remover snapshots antigos
+      script: files/remove_snapshots.sh {{ tool }} {{ snapshot_age_days }} "{{ vm_filter }}"
+      register: resultado
+
+    - name: Gerar log da execução
+      copy:
+        content: "{{ resultado.stdout }}"
+        dest: "{{ log_path }}"
+        mode: '0644'
+
+    - name: Notificar (via script externo)
+      script: files/notify.sh "{{ resultado.stdout | to_nice_json }}"
+      when: resultado.stdout is defined
