@@ -1,6 +1,6 @@
 ---
 - name: Valida e reinicia serviços de irrigação se necessário
-  hosts: sentraal_irrigacao
+  hosts: all
   become: true
   vars:
     irrigacao_servicos:
