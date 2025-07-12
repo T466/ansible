@@ -19,18 +19,19 @@
       loop_control:
         label: "{{ item }}"
 
-    - name: Reinicia os serviços que não estão ativos
-      block:
-        - name: Para o serviço {{ item.item }}
-          systemd:
-            name: "{{ item.item }}"
-            state: stopped
+    - name: Para serviços inativos
+      systemd:
+        name: "{{ item.item }}"
+        state: stopped
+      when: item.stdout != "active"
+      loop: "{{ resultado_status.results }}"
+      loop_control:
+        label: "{{ item.item }}"
 
-        - name: Inicia o serviço {{ item.item }}
-          systemd:
-            name: "{{ item.item }}"
-            state: started
-
+    - name: Inicia serviços inativos
+      systemd:
+        name: "{{ item.item }}"
+        state: started
       when: item.stdout != "active"
       loop: "{{ resultado_status.results }}"
       loop_control:
@@ -42,8 +43,7 @@
       changed_when: false
       loop: "{{ irrigacao_servicos }}"
 
-    - name: Mostrar resultado
+    - name: Mostrar resultado final
       debug:
         msg: "Serviço {{ item.item }} => {{ item.stdout }}"
       loop: "{{ status_final.results }}"
-
