@@ -1,0 +1,49 @@
+---
+- name: Valida e reinicia serviços de irrigação se necessário
+  hosts: sentraal_irrigacao
+  become: true
+  vars:
+    irrigacao_servicos:
+      - irrigacao2000
+      - irrigacao2001
+      - irrigacao2002
+
+  tasks:
+
+    - name: Verifica status atual dos serviços
+      shell: systemctl is-active {{ item }}
+      register: resultado_status
+      changed_when: false
+      failed_when: false
+      loop: "{{ irrigacao_servicos }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Reinicia os serviços que não estão ativos
+      block:
+        - name: Para o serviço {{ item.item }}
+          systemd:
+            name: "{{ item.item }}"
+            state: stopped
+
+        - name: Inicia o serviço {{ item.item }}
+          systemd:
+            name: "{{ item.item }}"
+            state: started
+
+      when: item.stdout != "active"
+      loop: "{{ resultado_status.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Exibe status final de cada serviço
+      shell: systemctl is-active {{ item }}
+      register: status_final
+      changed_when: false
+      loop: "{{ irrigacao_servicos }}"
+
+    - name: Mostrar resultado
+      debug:
+        msg: "Serviço {{ item.item }} => {{ item.stdout }}"
+      loop: "{{ status_final.results }}"
+
