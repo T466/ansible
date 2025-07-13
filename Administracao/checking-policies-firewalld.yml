@@ -1,0 +1,52 @@
+- name: Validar conformidade do firewalld com baseline
+  hosts: all
+  become: true
+  vars:
+    firewalld_ref_dir: "/opt/firewalld-referencia"
+    firewalld_tmp_dir: "/tmp/firewalld-check"
+    status_file: "/etc/status-firewalld-polices/polices-status"
+
+  tasks:
+
+    - name: Criar diretório temporário
+      file:
+        path: "{{ firewalld_tmp_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Criar diretório do status (se não existir)
+      file:
+        path: "{{ status_file | dirname }}"
+        state: directory
+        mode: '0755'
+
+    - name: Exportar configuração runtime de cada zona
+      shell: |
+        firewall-cmd --get-zones | tr ' ' '\n' | while read zone; do
+          echo "Zona: $zone" > {{ firewalld_tmp_dir }}/$zone.txt
+          firewall-cmd --zone=$zone --list-all >> {{ firewalld_tmp_dir }}/$zone.txt
+        done
+      args:
+        executable: /bin/bash
+
+    - name: Comparar zonas com referência
+      shell: |
+        diff -u {{ firewalld_ref_dir }}/{{ item }}.txt {{ firewalld_tmp_dir }}/{{ item }}.txt
+      register: firewalld_diff
+      failed_when: false
+      changed_when: false
+      loop: "{{ lookup('ansible.builtin.fileglob', firewalld_ref_dir + '/*.txt', wantlist=True) | map('basename') | map('regex_replace', '.txt$', '') }}"
+
+    - name: Definir status com base nas diferenças
+      set_fact:
+        firewalld_status: "{{ 'firewalld nok' if firewalld_diff.results | selectattr('stdout', '!=', '') | list | length > 0 else 'firewalld ok' }}"
+
+    - name: Gravar status em arquivo
+      copy:
+        content: "{{ firewalld_status }}\n"
+        dest: "{{ status_file }}"
+        mode: '0644'
+
+    - name: Exibir status
+      debug:
+        msg: "Status atual das políticas do firewalld: {{ firewalld_status }}"
