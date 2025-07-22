@@ -23,7 +23,7 @@
       unarchive:
         src: "{{ prometheus_tmp_dir }}/prometheus-{{ prometheus_version }}.tar.gz"
         dest: "{{ prometheus_tmp_dir }}"
-        remote_src: yes
+        remote_src: true
 
     - name: Parar o serviço do Prometheus
       systemd:
@@ -32,13 +32,13 @@
 
     - name: Substituir binários do Prometheus
       copy:
-      src: "{{ prometheus_tmp_dir }}/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
-      dest: "{{ prometheus_bin_dir }}/{{ item }}"
-      mode: '0755'
-      remote_src: true
+        src: "{{ prometheus_tmp_dir }}/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+        dest: "{{ prometheus_bin_dir }}/{{ item }}"
+        mode: '0755'
+        remote_src: true
       loop:
-      - prometheus
-      - promtool
+        - prometheus
+        - promtool
 
     - name: Verificar versão instalada
       command: /usr/local/bin/prometheus --version
