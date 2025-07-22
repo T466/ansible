@@ -1,6 +1,6 @@
 ---
 - name: Atualizar Prometheus
-  hosts: prometheus
+  hosts: all
   become: true
   vars:
     prometheus_version: "3.3.1"
