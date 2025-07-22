@@ -1,0 +1,54 @@
+---
+- name: Atualizar Prometheus para versão 3.3.1
+  hosts: prometheus
+  become: true
+  vars:
+    prometheus_version: "3.3.1"
+    prometheus_url: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+    prometheus_tmp_dir: "/tmp"
+    prometheus_bin_dir: "/usr/local/bin"
+
+  tasks:
+    - name: Garantir que diretório temporário existe
+      file:
+        path: "{{ prometheus_tmp_dir }}"
+        state: directory
+
+    - name: Baixar Prometheus {{ prometheus_version }}
+      get_url:
+        url: "{{ prometheus_url }}"
+        dest: "{{ prometheus_tmp_dir }}/prometheus-{{ prometheus_version }}.tar.gz"
+
+    - name: Extrair Prometheus
+      unarchive:
+        src: "{{ prometheus_tmp_dir }}/prometheus-{{ prometheus_version }}.tar.gz"
+        dest: "{{ prometheus_tmp_dir }}"
+        remote_src: yes
+
+    - name: Parar o serviço do Prometheus
+      systemd:
+        name: prometheus.service
+        state: stopped
+
+    - name: Substituir binários do Prometheus
+      copy:
+        src: "{{ prometheus_tmp_dir }}/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+        dest: "{{ prometheus_bin_dir }}/{{ item }}"
+        mode: '0755'
+      loop:
+        - prometheus
+        - promtool
+
+    - name: Verificar versão instalada
+      command: /usr/local/bin/prometheus --version
+      register: prometheus_version_output
+
+    - name: Mostrar versão do Prometheus
+      debug:
+        var: prometheus_version_output.stdout_lines
+
+    - name: Iniciar o serviço do Prometheus
+      systemd:
+        name: prometheus.service
+        state: started
+        enabled: yes
