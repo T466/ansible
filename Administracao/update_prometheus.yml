@@ -1,5 +1,5 @@
 ---
-- name: Atualizar Prometheus para versão 3.3.1
+- name: Atualizar Prometheus
   hosts: prometheus
   become: true
   vars:
