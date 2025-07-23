@@ -1,0 +1,36 @@
+---
+- name: Instalação do CrowdStrike Falcon Sensor no Oracle Linux 8 (sem CID)
+  hosts: all
+  become: true
+  vars:
+    falcon_rpm_url: "https://github.com/T466/CrowdStrike/raw/main/falcon-sensor-6.39.0-13601.el8.x86_64.rpm"
+    falcon_rpm_file: "/tmp/falcon-sensor.rpm"
+
+  tasks:
+
+    - name: Baixar o pacote do Falcon Sensor
+      get_url:
+        url: "{{ falcon_rpm_url }}"
+        dest: "{{ falcon_rpm_file }}"
+        mode: '0644'
+
+    - name: Instalar o Falcon Sensor (ignorando verificação GPG)
+      dnf:
+        name: "{{ falcon_rpm_file }}"
+        state: present
+        disable_gpg_check: true
+
+    - name: Ativar e iniciar o serviço falcon-sensor
+      systemd:
+        name: falcon-sensor
+        enabled: yes
+        state: started
+
+    - name: Verificar status do serviço
+      command: systemctl status falcon-sensor
+      register: sensor_status
+      changed_when: false
+
+    - name: Exibir status do sensor
+      debug:
+        var: sensor_status.stdout_lines
