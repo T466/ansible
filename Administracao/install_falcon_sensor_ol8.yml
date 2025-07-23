@@ -2,10 +2,12 @@
 - name: Instalação do CrowdStrike Falcon Sensor no Oracle Linux 8
   hosts: all
   become: true
+  vars_files:
+    - vault.yml  # Contém falcon_cid protegido com Ansible Vault
+
   vars:
     falcon_rpm_url: "https://github.com/T466/CrowdStrike/raw/main/falcon-sensor-6.39.0-13601.el8.x86_64.rpm"
     falcon_rpm_file: "/tmp/falcon-sensor.rpm"
-    falcon_cid: "SEU-CID-AQUI"   # <<< Substitua pelo seu CID real
 
   tasks:
 
