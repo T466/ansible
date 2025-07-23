@@ -1,7 +1,7 @@
 ---
 - name: Instalação do CrowdStrike Falcon Sensor no Oracle Linux 8
   hosts: all
-  become: yes
+  become: true
   vars:
     falcon_rpm_url: "https://github.com/T466/CrowdStrike/raw/main/falcon-sensor-6.39.0-13601.el8.x86_64.rpm"
     falcon_rpm_file: "/tmp/falcon-sensor.rpm"
