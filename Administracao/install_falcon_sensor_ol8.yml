@@ -15,10 +15,11 @@
         dest: "{{ falcon_rpm_file }}"
         mode: '0644'
 
-    - name: Instalar o Falcon Sensor
+    - name: Instalar o Falcon Sensor (ignorando verificação GPG)
       dnf:
         name: "{{ falcon_rpm_file }}"
         state: present
+        disable_gpg_check: true
 
     - name: Configurar o CID da sua conta CrowdStrike
       command: /opt/CrowdStrike/falconctl -s --cid={{ falcon_cid }}
