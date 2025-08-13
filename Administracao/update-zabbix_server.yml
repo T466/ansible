@@ -1,0 +1,46 @@
+---
+- name: Backup e atualização do Zabbix Server
+  hosts: zabbix_servers
+  become: yes
+  vars:
+    backup_dir: /var/backups/zabbix
+    db_name: zabbix
+    db_user: zabbix
+    db_password: "{{ vault_db_password }}"  # Armazenado no Ansible Vault
+  tasks:
+    - name: Criar diretório de backup
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Backup do banco de dados Zabbix
+      ansible.builtin.command: >
+        pg_dump -U {{ db_user }} {{ db_name }}
+        > {{ backup_dir }}/zabbix_{{ ansible_date_time.iso8601 }}.sql
+      environment:
+        PGPASSWORD: "{{ db_password }}"
+
+    - name: Atualizar cache de pacotes
+      ansible.builtin.yum:
+        name: "*"
+        state: latest
+        update_cache: yes
+
+    - name: Atualizar pacotes do Zabbix
+      ansible.builtin.yum:
+        name:
+          - zabbix-server-pgsql
+          - zabbix-web-pgsql
+          - zabbix-apache-conf
+        state: latest
+
+    - name: Reiniciar Zabbix Server
+      ansible.builtin.service:
+        name: zabbix-server
+        state: restarted
+
+    - name: Reiniciar Apache
+      ansible.builtin.service:
+        name: httpd
+        state: restarted
