@@ -1,0 +1,41 @@
+---
+- name: Análise de Rede
+  hosts: [localhost] # ou especifique o grupo de hosts desejado
+  become: yes # torna necessário privilégios de superusuário
+
+  tasks:
+  - name: Instalar ferramentas de análise de rede
+    apt:
+      name:
+        - nmap
+        - tcpdump
+      state: present
+
+  - name: Scan de portas abertas com nmap
+    shell: nmap -sS 127.0.0.1 # Substitua 127.0.0.1 pelo endereço IP desejado
+    register: resultado_scan
+    become: yes
+
+  - name: Mostrar resultado do scan de portas
+    debug:
+      msg: "{{ resultado_scan.stdout }}"
+
+  - name: Capturar pacotes de rede com tcpdump
+    shell: tcpdump -i any -w captura.pcap # Substitua any pelo interface de rede desejada
+    async: 1000 # Esse módulo não suporta async de forma convencional
+    become: yes
+
+  - name: Parar captura de pacotes
+    # Como Ansible não consegue controlar diretamente a execução de jobs em segundo plano
+    # em uma sessão de shell iniciada aqui, indicamos passos manuais:
+    debug:
+      msg: "Por favor, pare a captura de pacotes com tcpdump manualmente ( use 'pkill tcpdump' )"
+
+  - name: Ler captura de pacotes
+    shell: tcpdump -r captura.pcap
+    register: resultado_leitura
+    become: yes
+
+  - name: Mostrar resultado da leitura da captura
+    debug:
+      msg: "{{ resultado_leitura.stdout }}"
