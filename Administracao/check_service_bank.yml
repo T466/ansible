@@ -1,0 +1,48 @@
+---
+- name: Validação de Serviços e Comunicação com Bancos/Seridores
+  hosts: servidores
+  become: yes
+
+  tasks:
+  - name: Verificar serviços em execução
+    shell: "ss -tlnp | grep {{ item }}"
+    loop:
+      - 80  # HTTP
+      - 443  # HTTPS
+      - 5432  # PostgreSQL
+      - 3306  # MySQL
+      - 1521  # Oracle
+    register: resultado
+
+  - name: Imprimir resultados dos serviços
+    debug:
+      msg: "{{ resultado.stdout }}"
+
+  - name: Identificar comunicação com bancos/seridores
+    shell: "netstat -tlnp | grep {{ item }}"
+    loop:
+      - 5432  # PostgreSQL
+      - 3306  # MySQL
+      - 1521  # Oracle
+    register: comunicacao
+
+  - name: Imprimir resultados da comunicação
+    debug:
+      msg: "{{ comunicacao.stdout }}"
+
+  - name: Mapear comunicação entre serviços
+    set_fact:
+      comunicacao_map:
+        - src: "httpd"
+          dest: "postgresql"
+          port: 5432
+        - src: "mysql"
+          dest: "application"
+          port: 3306
+        - src: "oracle"
+          dest: "application"
+          port: 1521
+
+  - name: Imprimir mapa de comunicação
+    debug:
+      msg: "{{ comunicacao_map }}"
