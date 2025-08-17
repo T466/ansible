@@ -1,0 +1,94 @@
+---
+- name: Provisionar RHEL 8 na Azure a partir de imagem/template
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  collections:
+    - azure.azcollection
+
+  vars:
+    # personalize aqui:
+    rg_name: "rg-lab-rhel8"
+    location: "brazilsouth"        # ou brazilsoutheast, eastus, etc.
+    vm_name: "rhel8-app-01"
+    vm_size: "Standard_B2ms"
+    vnet_name: "vnet-lab"
+    subnet_name: "subnet-apps"
+    nic_name: "nic-rhel8-app-01"
+    pip_name: "pip-rhel8-app-01"
+    admin_username: "ansible"
+    # Cole o ID completo da sua imagem (Managed Image ou SIG version)
+    image_id: "/subscriptions/<SUB>/resourceGroups/<RG>/providers/Microsoft.Compute/images/<IMAGE_NAME>"
+
+    # Chave pública SSH para o usuário admin (ou use Azure Key Vault)
+    ssh_public_key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+
+    # Tags de governança
+    common_tags:
+      owner: "infra"
+      env: "lab"
+      os: "rhel8"
+      managed-by: "ansible"
+
+  tasks:
+    - name: Garantir Resource Group
+      azure_rm_resourcegroup:
+        name: "{{ rg_name }}"
+        location: "{{ location }}"
+        tags: "{{ common_tags }}"
+
+    - name: Garantir Public IP (dinâmico)
+      azure_rm_publicipaddress:
+        resource_group: "{{ rg_name }}"
+        name: "{{ pip_name }}"
+        allocation_method: Dynamic
+        tags: "{{ common_tags }}"
+
+    - name: Obter referência da Subnet existente
+      azure_rm_subnet_info:
+        resource_group: "{{ rg_name }}"
+        name: "{{ subnet_name }}"
+        virtual_network_name: "{{ vnet_name }}"
+      register: subnet_info
+
+    - name: Garantir NIC
+      azure_rm_networkinterface:
+        resource_group: "{{ rg_name }}"
+        name: "{{ nic_name }}"
+        virtual_network: "{{ vnet_name }}"
+        subnet: "{{ subnet_name }}"
+        ip_configurations:
+          - name: ipconfig1
+            public_ip_address_name: "{{ pip_name }}"
+        tags: "{{ common_tags }}"
+
+    - name: Provisionar VM RHEL 8 a partir do template/imagem
+      azure_rm_virtualmachine:
+        resource_group: "{{ rg_name }}"
+        name: "{{ vm_name }}"
+        vm_size: "{{ vm_size }}"
+        network_interfaces: "{{ nic_name }}"
+        image:
+          id: "{{ image_id }}"
+        admin_username: "{{ admin_username }}"
+        ssh_password_enabled: false
+        ssh_public_keys:
+          - path: "/home/{{ admin_username }}/.ssh/authorized_keys"
+            key_data: "{{ ssh_public_key }}"
+        managed_disk_type: "Standard_LRS"
+        tags: "{{ common_tags }}"
+      register: vm_out
+
+    - name: Exibir IP Público da VM
+      debug:
+        msg: "VM {{ vm_name }} criada. IP Público: {{ hostvars['localhost']['vm_public_ip'] | default('verifique o PIP') }}"
+
+    - name: Buscar IP público efetivo
+      azure_rm_publicipaddress_info:
+        resource_group: "{{ rg_name }}"
+        name: "{{ pip_name }}"
+      register: pip_info
+
+    - name: Setar var com IP público
+      set_fact:
+        vm_public_ip: "{{ pip_info.publicipaddresses[0].ip_address | default('N/A') }}"
