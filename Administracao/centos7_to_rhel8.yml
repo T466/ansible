@@ -1,0 +1,128 @@
+---
+- name: CentOS7 -> RHEL8 (convert2rhel + Leapp)
+  hosts: centos7
+  become: true
+  gather_facts: yes
+
+  vars:
+    rh_org: "ORG_ID"
+    rh_activation_key: "AK-RHEL7"
+    disable_repos_patterns:
+      - epel*
+      - remi*
+      - rpmfusion*
+    leapp_report: "/var/log/leapp/leapp-report.txt"
+
+  pre_tasks:
+    - name: Garantir que é CentOS 7
+      assert:
+        that:
+          - ansible_distribution in ["CentOS","CentOS Linux"]
+          - ansible_facts.distribution_major_version | int == 7
+        fail_msg: "Este playbook só roda em CentOS 7."
+      tags: [precheck]
+
+    - name: Backup de .repo
+      shell: >
+        mkdir -p /root/repo-backup &&
+        cp -a /etc/yum.repos.d/*.repo /root/repo-backup/ || true
+      changed_when: false
+      tags: [precheck]
+
+    - name: Desabilitar repositórios de terceiros
+      shell: |
+        for f in /etc/yum.repos.d/*.repo; do
+          sed -i 's/enabled=1/enabled=0/g' "$f"
+        done
+      tags: [precheck]
+
+    - name: Remover EPEL/remi/rpmfusion (se presentes)
+      yum:
+        name: "{{ item }}"
+        state: absent
+      loop: ["epel-release", "remi-release", "rpmfusion-free-release", "rpmfusion-nonfree-release"]
+      tags: [precheck]
+
+  tasks:
+    - block:
+        - name: Registrar no RHSM (se ainda não estiver)
+          shell: >
+            subscription-manager status || subscription-manager register --activationkey={{ rh_activation_key }}
+            --org={{ rh_org }}
+          args: { warn: false }
+          register: rhsm_reg
+          changed_when: "'The system has been registered' in rhsm_reg.stdout"
+          tags: [convert]
+
+        - name: Instalar convert2rhel
+          yum:
+            name:
+              - convert2rhel
+            state: present
+          tags: [convert]
+
+        - name: Executar convert2rhel (não interativo)
+          shell: >
+            convert2rhel --debug --enablerepo rhel-7-server-rpms
+            --activationkey {{ rh_activation_key }} --org {{ rh_org }} -y
+          args:
+            creates: /var/lib/convert2rhel/cleanup-post
+          tags: [convert]
+
+        - name: Reboot após conversão para RHEL7
+          reboot:
+            msg: "Reiniciando pós-convert2rhel"
+            connect_timeout: 60
+            reboot_timeout: 1800
+          tags: [convert]
+
+        - name: Garantir pacotes do Leapp
+          yum:
+            name:
+              - leapp
+              - leapp-repository
+              - leapp-upgrade
+            state: present
+          tags: [leapp]
+
+        - name: Leapp preupgrade
+          shell: leapp preupgrade
+          args: { creates: "{{ leapp_report }}" }
+          tags: [leapp]
+
+        - name: Falhar se houver Inhibitors no relatório
+          shell: "grep -i 'inhibitor' {{ leapp_report }}"
+          register: inhibitors
+          failed_when: inhibitors.rc == 0
+          changed_when: false
+          ignore_errors: false
+          tags: [leapp]
+
+        - name: Leapp upgrade
+          shell: leapp upgrade
+          tags: [leapp]
+
+        - name: Reboot para concluir upgrade para RHEL8
+          reboot:
+            msg: "Reiniciando para finalizar RHEL8"
+            connect_timeout: 60
+            reboot_timeout: 3600
+          tags: [leapp]
+
+      rescue:
+        - name: Falha controlada
+          debug:
+            msg: "Falhou em alguma etapa. Cheque logs convert2rhel/leapp para ação manual."
+        - meta: end_play
+
+  post_tasks:
+    - name: Verificar versão final
+      command: cat /etc/redhat-release
+      register: rel
+      changed_when: false
+      tags: [verify]
+
+    - name: Mostrar release
+      debug:
+        msg: "{{ rel.stdout }}"
+      tags: [verify]
