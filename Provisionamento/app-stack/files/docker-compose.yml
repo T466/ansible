@@ -1,0 +1,57 @@
+version: "3.9"
+
+services:
+  app:
+    image: ${APP_IMAGE}
+    env_file: .env
+    environment:
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: ${MYSQL_DATABASE}
+      DB_USER: ${MYSQL_USER}
+      DB_PASS: ${MYSQL_PASSWORD}
+    expose:
+      - "${APP_PORT}"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks: [appnet]
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${PUBLISHED_HTTP_PORT}:80"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro,Z
+    depends_on:
+      - app
+    networks: [appnet]
+
+  mysql:
+    image: mysql:8.0
+    command:
+      - "mysqld"
+      - "--default-authentication-plugin=mysql_native_password"
+      - "--character-set-server=utf8mb4"
+      - "--collation-server=utf8mb4_unicode_ci"
+    env_file: .env
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql:Z
+      - ./initdb:/docker-entrypoint-initdb.d:ro,Z
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [appnet]
+
+networks:
+  appnet:
+
+volumes:
+  mysql_data:
