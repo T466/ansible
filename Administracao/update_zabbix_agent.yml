@@ -1,0 +1,55 @@
+---
+- name: Update Zabbix Agent across heterogeneous distros
+  hosts: zabbix_agents
+  become: true
+  gather_facts: true
+
+  vars:
+    zbx_package: zabbix-agent   # altere para "zabbix-agent2" se for o seu padrão
+
+  pre_tasks:
+    - name: Fail fast for unsupported OS
+      assert:
+        that:
+          - ansible_facts['os_family'] in ['RedHat', 'Suse', 'Debian']
+        fail_msg: "OS não suportado por este playbook."
+        success_msg: "OS suportado: {{ ansible_facts['os_family'] }}"
+
+    - name: Refresh pkg metadata (APT)
+      apt:
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_facts['pkg_mgr'] == 'apt'
+      changed_when: false
+
+    - name: Refresh pkg metadata (DNF/YUM)
+      dnf:
+        update_cache: true
+      when: ansible_facts['pkg_mgr'] in ['dnf', 'yum']
+      changed_when: false
+
+    - name: Refresh pkg metadata (Zypper)
+      zypper:
+        name: zypper
+        update_cache: true
+      when: ansible_facts['pkg_mgr'] == 'zypper'
+      changed_when: false
+
+  tasks:
+    - name: Ensure Zabbix Agent is at latest version
+      package:
+        name: "{{ zbx_package }}"
+        state: latest
+      notify: Restart Zabbix Agent
+
+    - name: Ensure service is enabled and started
+      service:
+        name: "{{ zbx_package }}"
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Restart Zabbix Agent
+      service:
+        name: "{{ zbx_package }}"
+        state: restarted
