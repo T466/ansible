@@ -1,0 +1,211 @@
+---
+- name: Atualizar Apache NiFi com backup e rollback
+  hosts: nifi               # defina esse grupo no seu inventário
+  become: yes
+  gather_facts: yes
+
+  vars:
+    # === AJUSTE AQUI ===
+    nifi_user: nifi
+    nifi_group: nifi
+    nifi_install_dir: /opt
+    nifi_home: /opt/nifi            # symlink apontando para /opt/nifi-<versão>
+    nifi_service: nifi
+
+    # versão nova que você quer instalar
+    nifi_version_new: "1.26.0"      # <--- altere
+    nifi_tarball: "nifi-{{ nifi_version_new }}-bin.tar.gz"
+    # URL padrão do Apache Archive (mude se usar mirror interno)
+    nifi_download_url: "https://archive.apache.org/dist/nifi/{{ nifi_version_new }}/{{ nifi_tarball }}"
+    # opcional: SHA256 p/ validar (recomendado)
+    nifi_sha256: ""                 # ex.: "sha256:abcdef..."
+
+    # portas para health-check (ajuste se usa HTTPS/8443)
+    nifi_listen_host: "127.0.0.1"
+    nifi_listen_port: 8080
+    nifi_health_path: "/nifi"       # "/nifi" costuma redirecionar
+
+    # backup apenas de conf/ e arquivos sensíveis do NIFI_HOME
+    nifi_backup_base: /var/backups/nifi
+    nifi_keep_backups: 5
+
+    # arquivos de configuração que serão migrados do diretório atual p/ o novo
+    nifi_conf_files:
+      - conf/nifi.properties
+      - conf/bootstrap.conf
+      - conf/bootstrap-notification-services.xml
+      - conf/authorizers.xml
+      - conf/login-identity-providers.xml
+      - conf/users.xml
+      - conf/state-management.xml
+      # flows (o nome varia por versão: flow.xml.gz ou flow.json.gz)
+      - conf/flow.xml.gz
+      - conf/flow.json.gz
+
+  pre_tasks:
+    - name: Conferir se o serviço existe
+      command: systemctl status {{ nifi_service }}
+      register: _svc_status
+      failed_when: false
+      changed_when: false
+
+    - name: Coletar destino atual do symlink /opt/nifi (se existir)
+      command: readlink -f {{ nifi_home }}
+      register: nifi_current_dir_cmd
+      failed_when: false
+      changed_when: false
+
+    - name: Definir diretório atual do NiFi
+      set_fact:
+        nifi_current_dir: >-
+          {{ (nifi_current_dir_cmd.stdout | default('')) | ternary(nifi_current_dir_cmd.stdout, nifi_home) }}
+
+    - name: Definir diretório novo do NiFi
+      set_fact:
+        nifi_new_dir: "{{ nifi_install_dir }}/nifi-{{ nifi_version_new }}"
+
+    - name: Criar pasta de backup com timestamp
+      set_fact:
+        nifi_backup_dir: "{{ nifi_backup_base }}/{{ ansible_date_time.iso8601_basic }}"
+
+  tasks:
+    - name: Parar NiFi (se estiver rodando)
+      service:
+        name: "{{ nifi_service }}"
+        state: stopped
+      when: _svc_status.rc == 0
+      tags: [stop]
+
+    - name: Criar diretório de backup
+      file:
+        path: "{{ nifi_backup_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0750'
+
+    - name: Fazer backup de arquivos de configuração importantes
+      archive:
+        path: "{{ item }}"
+        dest: "{{ nifi_backup_dir }}/{{ item | basename }}.tgz"
+        format: gz
+      loop: "{{ nifi_conf_files | map('regex_replace','^', nifi_current_dir + '/') | list }}"
+      ignore_errors: yes
+
+    - name: Baixar tarball do NiFi {{ nifi_version_new }}
+      get_url:
+        url: "{{ nifi_download_url }}"
+        dest: "/tmp/{{ nifi_tarball }}"
+        mode: '0644'
+        checksum: "{{ nifi_sha256 if nifi_sha256|length>0 else omit }}"
+      tags: [download]
+
+    - name: Descompactar em {{ nifi_install_dir }}
+      unarchive:
+        src: "/tmp/{{ nifi_tarball }}"
+        dest: "{{ nifi_install_dir }}"
+        remote_src: yes
+        creates: "{{ nifi_new_dir }}"
+      tags: [install]
+
+    - name: Garantir owner correto no novo diretório
+      file:
+        path: "{{ nifi_new_dir }}"
+        state: directory
+        owner: "{{ nifi_user }}"
+        group: "{{ nifi_group }}"
+        recurse: yes
+
+    - name: Copiar configs do diretório atual para o novo (se existirem)
+      copy:
+        src: "{{ nifi_current_dir }}/{{ item }}"
+        dest: "{{ nifi_new_dir }}/{{ item }}"
+        owner: "{{ nifi_user }}"
+        group: "{{ nifi_group }}"
+        mode: '0640'
+        remote_src: yes
+      loop: "{{ nifi_conf_files }}"
+      ignore_errors: yes
+      tags: [config]
+
+    - name: Atualizar symlink /opt/nifi -> {{ nifi_new_dir }}
+      file:
+        src: "{{ nifi_new_dir }}"
+        dest: "{{ nifi_home }}"
+        state: link
+        force: yes
+      notify: Restart NiFi
+      tags: [switch]
+
+    - name: Instalar/atualizar serviço systemd (opcional)
+      command: "{{ nifi_home }}/bin/nifi.sh install"
+      args:
+        chdir: "{{ nifi_home }}/bin"
+      register: _install_service
+      failed_when: _install_service.rc not in [0,1]
+      changed_when: _install_service.rc == 0
+      tags: [service]
+
+    - name: Iniciar NiFi
+      service:
+        name: "{{ nifi_service }}"
+        state: started
+        enabled: yes
+      tags: [start]
+
+    - name: Aguardar porta responder
+      wait_for:
+        host: "{{ nifi_listen_host }}"
+        port: "{{ nifi_listen_port }}"
+        delay: 5
+        timeout: 180
+      tags: [health]
+
+    - name: Health-check HTTP básico
+      uri:
+        url: "http://{{ nifi_listen_host }}:{{ nifi_listen_port }}{{ nifi_health_path }}"
+        method: GET
+        status_code: [200,302]
+        return_content: no
+      register: _hc
+      retries: 5
+      delay: 3
+      until: _hc.status in [200,302]
+      tags: [health]
+
+  handlers:
+    - name: Restart NiFi
+      service:
+        name: "{{ nifi_service }}"
+        state: restarted
+
+  rescue:
+    - name: [ROLLBACK] Restaurar symlink antigo
+      file:
+        src: "{{ nifi_current_dir }}"
+        dest: "{{ nifi_home }}"
+        state: link
+        force: yes
+
+    - name: [ROLLBACK] Subir NiFi versão antiga
+      service:
+        name: "{{ nifi_service }}"
+        state: started
+        enabled: yes
+
+    - name: [ROLLBACK] Informar falha
+      fail:
+        msg: "Falha no upgrade do NiFi. Symlink revertido para {{ nifi_current_dir }} e serviço iniciado."
+
+  post_tasks:
+    - name: Limpar tarball
+      file:
+        path: "/tmp/{{ nifi_tarball }}"
+        state: absent
+
+    - name: Manter apenas {{ nifi_keep_backups }} últimos backups
+      shell: |
+        ls -1dt {{ nifi_backup_base }}/* | tail -n +$(( {{ nifi_keep_backups }} + 1 )) | xargs -r rm -rf
+      args:
+        warn: false
+      changed_when: false
