@@ -1,0 +1,86 @@
+---
+- name: Ajustar DNS (resolv.conf ou NetworkManager)
+  hosts: all
+  become: yes
+  gather_facts: no
+
+  vars:
+    dns_search: "corp.adelie.com.br"
+    dns_new: ["10.20.30.10", "10.20.30.11"]
+    dns_old: ["10.10.10.10", "10.10.10.11"]
+
+  tasks:
+    - name: Verificar /etc/resolv.conf (symlink/arquivo)
+      stat:
+        path: /etc/resolv.conf
+      register: resolv_stat
+
+    - name: Descobrir alvo do symlink (se houver)
+      command: readlink -f /etc/resolv.conf
+      register: resolv_link
+      changed_when: false
+      failed_when: false
+
+    - name: Verificar se há nmcli disponível
+      command: nmcli --version
+      register: nmcli_check
+      changed_when: false
+      failed_when: false
+
+    - name: Marcar se é gerenciado pelo NetworkManager
+      set_fact:
+        nm_managed: "{{ resolv_stat.stat.islnk | default(false) and 'NetworkManager' in (resolv_link.stdout | default('')) and nmcli_check.rc == 0 }}"
+
+    # ===== CAMINHO 1: NetworkManager =====
+    - name: Capturar conexões ativas do NM
+      command: nmcli -t -f NAME connection show --active
+      register: nm_active
+      changed_when: false
+      when: nm_managed
+
+    - name: Definir lista de conexões a alterar
+      set_fact:
+        nm_conns: "{{ (nm_active.stdout_lines | default([])) | unique }}"
+      when: nm_managed
+
+    - name: Configurar DNS (IPv4) nas conexões ativas
+      command: >
+        nmcli con mod "{{ item }}"
+        ipv4.dns "{{ dns_new | join(' ') }}"
+        ipv4.dns-search "{{ dns_search }}"
+        ipv4.ignore-auto-dns yes
+      loop: "{{ nm_conns }}"
+      when: nm_managed and (nm_conns | length) > 0
+
+    - name: Reaplicar conexões
+      command: nmcli con up "{{ item }}"
+      loop: "{{ nm_conns }}"
+      when: nm_managed and (nm_conns | length) > 0
+
+    # ===== CAMINHO 2: Edição direta do /etc/resolv.conf =====
+    - name: Garantir linha 'search'
+      lineinfile:
+        path: /etc/resolv.conf
+        regexp: '^search\s+'
+        line: "search {{ dns_search }}"
+        create: yes
+        insertbefore: BOF
+        backup: yes
+      when: not nm_managed
+
+    - name: Remover nameservers antigos específicos
+      lineinfile:
+        path: /etc/resolv.conf
+        regexp: '^nameserver\s+{{ item | regex_escape() }}\s*$'
+        state: absent
+        backrefs: no
+      loop: "{{ dns_old }}"
+      when: not nm_managed
+
+    - name: Garantir novos nameservers (pós-search)
+      lineinfile:
+        path: /etc/resolv.conf
+        line: "nameserver {{ item }}"
+        insertafter: '^search\s+'
+      loop: "{{ dns_new }}"
+      when: not nm_managed
