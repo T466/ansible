@@ -1,0 +1,61 @@
+# playbooks/firebird_backup.yml
+- name: Backup Firebird (dump lógico com gbak)
+  hosts: db_firebird
+  become: true
+  vars_files:
+    - ../group_vars/all/vault.yml
+
+  tasks:
+    - name: Garantir diretório de backup
+      ansible.builtin.file:
+        path: "{{ firebird_backup_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Executar gbak (hot backup)
+      ansible.builtin.command:
+        cmd: >
+          {{ firebird_gbak_path }}
+          -b -g -v
+          -user {{ firebird_user }}
+          -password {{ firebird_password }}
+          {{ firebird_db_path }}
+          {{ firebird_backup_dir }}/{{ firebird_backup_name }}
+      register: gbak_result
+      changed_when: "'creating ' in gbak_result.stdout or gbak_result.rc == 0"
+
+    - name: Mostrar resumo do gbak
+      ansible.builtin.debug:
+        var: gbak_result.stdout_lines
+
+    - name: Comprimir backup (opcional)
+      when: firebird_compress
+      community.general.archive:
+        path: "{{ firebird_backup_dir }}/{{ firebird_backup_name }}"
+        dest: "{{ firebird_backup_dir }}/{{ firebird_archive_name }}"
+        format: gz
+        remove: true  # remove o .fbk após criar o .tar.gz
+
+    - name: Remover backups antigos por retenção
+      ansible.builtin.find:
+        paths: "{{ firebird_backup_dir }}"
+        age: "{{ firebird_backup_retention_days }}d"
+        patterns: "{{ firebird_compress | ternary('*.tar.gz','*.fbk') }}"
+      register: old_backups
+
+    - name: Apagar backups antigos
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_backups.files }}"
+
+    - name: Copiar para servidor de backup (opcional)
+      when: firebird_push_backup
+      ansible.builtin.copy:
+        src: "{{ firebird_backup_dir }}/{{ firebird_compress | ternary(firebird_archive_name, firebird_backup_name) }}"
+        dest: "{{ firebird_backup_target_path }}/"
+        mode: "0640"
+      delegate_to: "{{ firebird_backup_target_host }}"
+      run_once: true
