@@ -1,4 +1,3 @@
-# playbooks/firebird_backup.yml
 - name: Backup Firebird (dump lógico com gbak)
   hosts: db_firebird
   become: true
