@@ -1,0 +1,61 @@
+- name: MySQL upgrade orquestrado
+  hosts: mysql_all
+  become: yes
+  vars:
+    mysql_target_version: "8.0.37"        # fixe a versão!
+    mysql_svc: mysqld
+    mysql_root_cnf: /root/.my.cnf         # credencial segura (Vault)
+  pre_tasks:
+    - name: Checar versão atual
+      community.mysql.mysql_query:
+        login_unix_socket: /var/lib/mysql/mysql.sock
+        query: "SELECT VERSION() AS v"
+      register: cur
+
+    - name: Criar snapshot/backup (hook)
+      command: /bin/bash /opt/db/backup.sh
+      changed_when: true
+
+  tasks:
+    - name: Colocar réplica em read-only (se não for primário)
+      community.mysql.mysql_query:
+        login_unix_socket: /var/lib/mysql/mysql.sock
+        query: "SET GLOBAL super_read_only=ON"
+      when: "'replicas' in group_names"
+
+    - name: Instalar versão alvo do MySQL
+      ansible.builtin.dnf:
+        name:
+          - mysql-server-{{ mysql_target_version }}*
+          - mysql-client-{{ mysql_target_version }}*
+        state: present
+      notify: Restart MySQL
+
+    - name: Garantir serviço ativo
+      ansible.builtin.service:
+        name: "{{ mysql_svc }}"
+        state: started
+        enabled: yes
+
+    - name: mysql_upgrade (quando necessário)
+      command: mysql_upgrade --upgrade-system-tables
+      args: { creates: /var/lib/mysql/.upgrade_done_{{ mysql_target_version }} }
+      register: upg
+      changed_when: "'OK' in upg.stderr or upg.rc == 0"
+      when: cur.results[0].rows[0][0] is search('^5|^8\.0\.(0|1[0-5])')  # ex.: forçar em versões antigas
+
+    - name: Verificar versão pós-upgrade
+      community.mysql.mysql_query:
+        login_unix_socket: /var/lib/mysql/mysql.sock
+        query: "SELECT VERSION()"
+      register: after
+
+    - name: Validar healthcheck
+      command: mysqladmin ping
+      changed_when: false
+
+  handlers:
+    - name: Restart MySQL
+      ansible.builtin.service:
+        name: "{{ mysql_svc }}"
+        state: restarted
