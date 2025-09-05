@@ -1,0 +1,33 @@
+# create_gcp_vm.yml
+- name: Provisionar VM na GCP com Ansible
+  hosts: localhost
+  connection: local
+  collections:
+    - google.cloud
+  vars:
+    gcp_project: "SEU_PROJETO"
+    gcp_zone: "us-central1-a"
+    gcp_sa_file: "~/.config/gcp/sa.json"   # chave do Service Account
+    instance_name: "ansible-gcp-01"
+  tasks:
+    - name: Garantir que a VM existe
+      gcp_compute_instance:
+        name: "{{ instance_name }}"
+        project: "{{ gcp_project }}"
+        zone: "{{ gcp_zone }}"
+        auth_kind: serviceaccount
+        service_account_file: "{{ gcp_sa_file }}"
+        machine_type: "e2-medium"
+        disks:
+          - boot: true
+            auto_delete: true
+            initialize_params:
+              source_image: "projects/debian-cloud/global/images/family/debian-12"
+        network_interfaces:
+          - network: "default"
+            access_configs:
+              - name: "External NAT"
+                type: "ONE_TO_ONE_NAT"
+        metadata:
+          ssh-keys: "ansible:{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+        state: present
