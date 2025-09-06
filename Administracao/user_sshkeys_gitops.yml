@@ -1,0 +1,31 @@
+- name: Usuários e SSH keys via GitOps
+  hosts: linux
+  become: true
+  vars:
+    users:
+      - name: devops
+        uid: 1010
+        groups: wheel
+        key: "ssh-ed25519 AAAA... devops@t466"
+      - name: observability
+        uid: 1011
+        groups: wheel
+        key: "ssh-ed25519 BBBB... obs@t466"
+
+  tasks:
+    - name: Criar usuários
+      ansible.builtin.user:
+        name: "{{ item.name }}"
+        uid: "{{ item.uid }}"
+        groups: "{{ item.groups }}"
+        append: true
+        shell: /bin/bash
+        state: present
+      loop: "{{ users }}"
+
+    - name: Instalar chaves públicas
+      ansible.posix.authorized_key:
+        user: "{{ item.name }}"
+        key: "{{ item.key }}"
+        state: present
+      loop: "{{ users }}"
