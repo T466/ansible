@@ -1,0 +1,37 @@
+- name: Baseline Linux (RHEL/OL/Alma/Rocky)
+  hosts: linux
+  become: true
+
+  handlers:
+    - name: reload sshd
+      ansible.builtin.service:
+        name: sshd
+        state: reloaded
+
+  tasks:
+    - name: Pacotes básicos
+      ansible.builtin.package:
+        name: [chrony, vim-enhanced, git, curl]
+        state: present
+
+    - name: Ativar/permitir firewalld + SSH
+      ansible.builtin.service: { name: firewalld, state: started, enabled: true }
+    - name: Liberar porta 22/tcp
+      ansible.posix.firewalld:
+        service: ssh
+        state: enabled
+        permanent: true
+        immediate: true
+
+    - name: Timezone e NTP
+      community.general.timezone: { name: America/Sao_Paulo }
+    - name: Habilitar chrony
+      ansible.builtin.service: { name: chronyd, state: started, enabled: true }
+
+    - name: Endurecer SSH
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+        backup: true
+      notify: reload sshd
