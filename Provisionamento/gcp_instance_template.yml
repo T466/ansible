@@ -1,1 +1,35 @@
-cc
+- name: VM na GCP a partir de Instance Template
+  hosts: localhost
+  connection: local
+  collections:
+    - google.cloud
+  vars:
+    gcp_project: "SEU_PROJETO"
+    gcp_zone: "us-central1-a"
+    gcp_sa_file: "~/.config/gcp/sa.json"
+    instance_template: "app-template-v1"   # template já criado
+    mig_name: "app-mig"
+    base_instance_name: "app"
+    target_size: 1                          # 1 = uma VM; aumente para escalar
+
+  tasks:
+    - name: Obter selfLink do template
+      google.cloud.gcp_compute_instance_template_info:
+        project: "{{ gcp_project }}"
+        auth_kind: serviceaccount
+        service_account_file: "{{ gcp_sa_file }}"
+        filters:
+          - "name={{ instance_template }}"
+      register: tmpl
+
+    - name: Garantir MIG usando o template (cria/garante a(s) VM(s))
+      google.cloud.gcp_compute_instance_group_manager:
+        project: "{{ gcp_project }}"
+        zone: "{{ gcp_zone }}"
+        name: "{{ mig_name }}"
+        base_instance_name: "{{ base_instance_name }}"
+        target_size: "{{ target_size }}"
+        instance_template: "{{ tmpl.resources[0].selfLink }}"
+        auth_kind: serviceaccount
+        service_account_file: "{{ gcp_sa_file }}"
+        state: present
