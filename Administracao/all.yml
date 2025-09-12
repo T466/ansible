@@ -1,0 +1,17 @@
+# group_vars/all.yml
+neo4j_package_name: neo4j
+# Use "latest" ou uma versão específica (ex.: "5.22.0")
+neo4j_version: "latest"
+
+neo4j_repo_file: /etc/yum.repos.d/neo4j.repo
+neo4j_baseurl: "https://yum.neo4j.com/stable"
+neo4j_gpgkey_url: "https://debian.neo4j.com/neotechnology.gpg.key"
+
+neo4j_service: neo4j
+neo4j_conf_dir: /etc/neo4j
+neo4j_data_dir: /var/lib/neo4j/data
+neo4j_backup_dir: /var/backups/neo4j/{{ ansible_date_time.iso8601_basic }}
+
+# Se versão Enterprise e backup online:
+neo4j_backup_use_admin_tool: false
+neo4j_admin_bin: /usr/bin/neo4j-admin
