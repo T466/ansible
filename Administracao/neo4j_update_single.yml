@@ -1,0 +1,84 @@
+# neo4j_update_single.yml
+- name: Atualizar Neo4j em single node (RHEL 8)
+  hosts: neo4j_single
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Checar versão atual do Neo4j (se instalado)
+      ansible.builtin.shell: "neo4j --version || true"
+      register: neo4j_current_version
+      changed_when: false
+
+    - name: Mostrar versão atual
+      ansible.builtin.debug:
+        msg: "Versão atual: {{ neo4j_current_version.stdout | default('não instalado') }}"
+
+  tasks:
+    - name: Criar diretório de backup (opcional)
+      ansible.builtin.file:
+        path: "{{ neo4j_backup_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Parar serviço antes de backup
+      ansible.builtin.service:
+        name: "{{ neo4j_service }}"
+        state: stopped
+      when: neo4j_backup_use_admin_tool | bool == false
+
+    - name: Backup simples do diretório de dados (snapshot)
+      ansible.builtin.archive:
+        path: "{{ neo4j_data_dir }}"
+        dest: "{{ neo4j_backup_dir }}/data-backup.tar.gz"
+      when: neo4j_backup_use_admin_tool | bool == false
+
+    - name: (Opcional) Backup via neo4j-admin
+      ansible.builtin.command: >
+        {{ neo4j_admin_bin }} database backup --from=localhost:6362 --backup-dir={{ neo4j_backup_dir }}
+      when: neo4j_backup_use_admin_tool | bool
+
+    - name: Instalar GPG key do repositório
+      ansible.builtin.rpm_key:
+        state: present
+        key: "{{ neo4j_gpgkey_url }}"
+
+    - name: Configurar repositório Neo4j
+      ansible.builtin.copy:
+        dest: "{{ neo4j_repo_file }}"
+        mode: "0644"
+        content: |
+          [neo4j]
+          name=Neo4j Yum Repo
+          baseurl={{ neo4j_baseurl }}
+          enabled=1
+          gpgcheck=1
+          gpgkey={{ neo4j_gpgkey_url }}
+
+    - name: Instalar/atualizar Neo4j para versão desejada
+      ansible.builtin.yum:
+        name: "{{ neo4j_package_name }}{{ '-' + neo4j_version if neo4j_version != 'latest' else '' }}"
+        state: "{{ 'present' if neo4j_version != 'latest' else 'latest' }}"
+        update_cache: true
+      notify: Restart Neo4j
+
+    - name: Garantir serviço habilitado e iniciado
+      ansible.builtin.service:
+        name: "{{ neo4j_service }}"
+        enabled: true
+        state: started
+
+    - name: Validar versão após update
+      ansible.builtin.shell: "neo4j --version"
+      register: neo4j_new_version
+      changed_when: false
+
+    - name: Exibir versão nova
+      ansible.builtin.debug:
+        msg: "Versão após update: {{ neo4j_new_version.stdout }}"
+
+  handlers:
+    - name: Restart Neo4j
+      ansible.builtin.service:
+        name: "{{ neo4j_service }}"
+        state: restarted
