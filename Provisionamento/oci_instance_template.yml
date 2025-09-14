@@ -1,0 +1,69 @@
+---
+- name: Provisionar instância na OCI a partir de Instance Configuration
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  collections:
+    - oracle.oci
+
+  vars:
+    # --- Autenticação (use seu ~/.oci/config; ou defina variáveis abaixo) ---
+    # auth_type: api_key            # ou instance_principal
+    # config_file_location: "~/.oci/config"
+    # config_profile_name: "DEFAULT"
+    region: "sa-saopaulo-1"
+
+    # --- Parâmetros de provisionamento ---
+    compartment_id: "ocid1.compartment.oc1..xxxx"
+    availability_domain: "kIdk:SA-SAOPAULO-1-AD-1"   # ajuste para seu AD
+    subnet_id: "ocid1.subnet.oc1.sa-saopaulo-1.xxxx" # VCN/Subnet onde a VM vai nascer
+    instance_configuration_id: "ocid1.instanceconfiguration.oc1..xxxx"
+    display_name: "vm-web-01"
+    hostname_label: "vmweb01"  # vira o hostname da VNIC
+    assign_public_ip: false     # true se precisar IP público
+    ssh_public_key: "ssh-ed25519 AAAA...seu_pubkey..."
+
+    # Opcional: tags
+    freeform_tags:
+      Owner: "DevOps"
+      Env: "prd"
+
+  tasks:
+    - name: Criar instância a partir do Instance Configuration
+      oracle.oci.oci_compute_instance:
+        state: present
+        # autenticação (descomente se não usar ~/.oci/config)
+        # auth_type: "{{ auth_type | default(omit) }}"
+        # config_file_location: "{{ config_file_location | default(omit) }}"
+        # config_profile_name: "{{ config_profile_name | default(omit) }}"
+        region: "{{ region }}"
+
+        compartment_id: "{{ compartment_id }}"
+        availability_domain: "{{ availability_domain }}"
+        display_name: "{{ display_name }}"
+        freeform_tags: "{{ freeform_tags }}"
+        instance_configuration_id: "{{ instance_configuration_id }}"
+
+        # Detalhes da VNIC primária (substituem o que estiver no template, se desejar)
+        create_vnic_details:
+          subnet_id: "{{ subnet_id }}"
+          assign_public_ip: "{{ assign_public_ip | ternary('true','false') }}"
+          hostname_label: "{{ hostname_label }}"
+
+        # Metadados/Cloud-Init (opcional). Aqui só a chave SSH.
+        metadata:
+          ssh_authorized_keys: "{{ ssh_public_key }}"
+
+        # Espere até ficar 'RUNNING'
+        wait: true
+        wait_timeout: 1800
+
+      register: new_instance
+
+    - name: Exibir IPs da nova instância
+      ansible.builtin.debug:
+        msg:
+          id: "{{ new_instance.instance.id }}"
+          name: "{{ new_instance.instance.display_name }}"
+          private_ip: "{{ new_instance.instance.primary_private_ip }}"
+          public_ip: "{{ new_instance.instance.primary_public_ip | default('N/A') }}"
