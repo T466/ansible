@@ -1,0 +1,61 @@
+---
+- name: Atualizar/instalar Zabbix Agent 2 no Windows (WS2016+)
+  hosts: windows
+  gather_facts: no
+  vars:
+    zbx_version: "6.0.26"          # << defina a versão alvo (ex.: 6.0.26, 6.4.x, 7.0.x)
+    zbx_base_url: "https://cdn.zabbix.com/zabbix/binaries/stable"
+    # nome do arquivo MSI típico para x64 + OpenSSL (ajuste se usar outro build)
+    zbx_msi: "zabbix_agent2-{{ zbx_version }}-windows-amd64-openssl.msi"
+    zbx_download_url: "{{ zbx_base_url }}/{{ zbx_version.split('.')[0] }}.0/{{ zbx_version }}/{{ zbx_msi }}"
+    download_dir: 'C:\Temp\zabbix'
+    msi_path: "{{ download_dir }}\\{{ zbx_msi }}"
+    agent_exe: 'C:\Program Files\Zabbix Agent 2\zabbix_agent2.exe'
+    service_name: 'Zabbix Agent 2'  # display name do serviço
+
+  tasks:
+    - name: Criar diretório temporário
+      ansible.windows.win_file:
+        path: "{{ download_dir }}"
+        state: directory
+
+    - name: Verificar versão instalada (se existir)
+      ansible.windows.win_shell: |
+        if (Test-Path "{{ agent_exe }}") {
+          (Get-Item "{{ agent_exe }}").VersionInfo.FileVersion
+        }
+      register: installed_ver
+      changed_when: false
+      failed_when: false
+
+    - name: Exibir versão instalada
+      ansible.builtin.debug:
+        msg: "Versão instalada: {{ installed_ver.stdout | default('não encontrado') }}"
+
+    - name: Baixar MSI do Zabbix Agent 2 (apenas se versão diferente)
+      when: installed_ver.stdout is not defined or installed_ver.stdout.strip() != zbx_version
+      ansible.windows.win_get_url:
+        url: "{{ zbx_download_url }}"
+        dest: "{{ msi_path }}"
+        validate_certs: yes
+        force: yes
+
+    - name: Instalar/atualizar Zabbix Agent 2 (silencioso)
+      when: installed_ver.stdout is not defined or installed_ver.stdout.strip() != zbx_version
+      ansible.windows.win_package:
+        path: "{{ msi_path }}"
+        state: present
+        arguments: "/qn /norestart"
+      register: pkg
+
+    - name: Garantir serviço iniciado e automático
+      ansible.windows.win_service:
+        name: "{{ service_name }}"
+        start_mode: auto
+        state: started
+
+    - name: Reiniciar serviço se houve atualização
+      when: pkg is defined and pkg.changed
+      ansible.windows.win_service:
+        name: "{{ service_name }}"
+        state: restarted
