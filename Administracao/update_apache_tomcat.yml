@@ -1,0 +1,41 @@
+---
+- name: Atualizar Tomcat via dnf (RHEL 8)
+  hosts: tomcat
+  become: yes
+  gather_facts: yes
+  serial: 1
+
+  tasks:
+    - name: Garantir Java
+      ansible.builtin.dnf:
+        name: java-11-openjdk
+        state: present
+
+    - name: Atualizar Tomcat e apps
+      ansible.builtin.dnf:
+        name:
+          - tomcat
+          - tomcat-webapps
+          - tomcat-admin-webapps
+        state: latest
+
+    - name: Aplicar server.xml (opcional)
+      ansible.builtin.template:
+        src: server.xml.j2
+        dest: /etc/tomcat/server.xml
+        owner: root
+        group: tomcat
+        mode: "0644"
+      notify: restart tomcat
+
+    - name: Garantir serviço ativo
+      ansible.builtin.service:
+        name: tomcat
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: restart tomcat
+      ansible.builtin.service:
+        name: tomcat
+        state: restarted
