@@ -1,0 +1,187 @@
+---
+- name: "Teste de rotas: Tomcat -> ActiveMQ / SQL Server"
+  hosts: app      # rode a partir dos servidores de aplicação (onde o Tomcat está)
+  become: yes
+  gather_facts: yes
+
+  vars:
+    timeout_segundos: 5
+    do_traceroute: false        # mude para true se quiser coletar traceroute
+    # Se souber o nome do serviço do tomcat no RHEL8:
+    tomcat_service_name: tomcat # ex.: tomcat, tomcat9… (ou comente e pulamos o check de serviço)
+
+    # URLs HTTP do próprio Tomcat (localhost ou LB) para checar página/health
+    tomcat_http_urls:           # ajuste conforme seu ambiente
+      - "http://localhost:8080/"
+
+    # Alvos do ActiveMQ (portas TCP típicas)
+    activemq_targets:
+      - { name: "mq-openwire", host: "10.0.0.50", port: 61616 }
+      - { name: "mq-amqp",     host: "10.0.0.50", port: 5672 }
+    # (Opcional) Web console do ActiveMQ (HTTP)
+    activemq_web_urls: []       # ex.: ["http://10.0.0.50:8161/"]
+
+    # Alvos de SQL Server (TCP 1433 por padrão)
+    sqlserver_targets:
+      - { name: "sql-prod", host: "10.0.0.60", port: 1433 }
+
+    # (Opcional) teste SQL real com sqlcmd, se existir no host de app e se quiser autenticar:
+    #sql_login:
+    #  server: "10.0.0.60"
+    #  port: 1433
+    #  user: "usuario"
+    #  pass: "senhaF0rte!"
+
+  tasks:
+    - name: "INFO | Host e IP"
+      ansible.builtin.debug:
+        msg: "Executando testes a partir do host {{ inventory_hostname }} ({{ ansible_default_ipv4.address | default('sem_ip') }})"
+
+    # ---------- Tomcat ----------
+    - name: "Tomcat | coletar facts de serviços (se nome definido)"
+      ansible.builtin.service_facts:
+      when: tomcat_service_name is defined
+
+    - name: "Tomcat | status do serviço"
+      ansible.builtin.debug:
+        msg: >-
+          Serviço {{ tomcat_service_name }}:
+          {{
+            (ansible_facts.services[tomcat_service_name + '.service'].state
+             if (tomcat_service_name + '.service') in ansible_facts.services
+             else 'desconhecido')
+          }}
+      when: tomcat_service_name is defined
+
+    - name: "Tomcat | checar URLs HTTP"
+      ansible.builtin.uri:
+        url: "{{ item }}"
+        status_code: [200, 301, 302, 401]   # ajuste se seu endpoint exige auth
+        return_content: no
+        follow_redirects: safe
+        validate_certs: no
+        timeout: "{{ timeout_segundos }}"
+      loop: "{{ tomcat_http_urls }}"
+      register: tomcat_http_checks
+      failed_when: false
+
+    - name: "Tomcat | resultado URLs"
+      ansible.builtin.debug:
+        msg: "{{ item.item }} => HTTP {{ item.status | default('falha') }}"
+      loop: "{{ tomcat_http_checks.results | default([]) }}"
+
+    # ---------- ActiveMQ (TCP) ----------
+    - name: "ActiveMQ | teste TCP (portas OpenWire/AMQP, etc.)"
+      ansible.builtin.wait_for:
+        host: "{{ item.host }}"
+        port: "{{ item.port }}"
+        timeout: "{{ timeout_segundos }}"
+        state: started
+      loop: "{{ activemq_targets }}"
+      register: activemq_tcp
+      failed_when: false
+
+    - name: "ActiveMQ | resultado TCP"
+      ansible.builtin.debug:
+        msg: "{{ item.item.name }} ({{ item.item.host }}:{{ item.item.port }}) => {{ 'OK' if (item.elapsed is defined) else 'FALHA' }}"
+      loop: "{{ activemq_tcp.results | default([]) }}"
+
+    # ---------- ActiveMQ Web (HTTP) ----------
+    - name: "ActiveMQ | checar web console (HTTP)"
+      when: activemq_web_urls | length > 0
+      ansible.builtin.uri:
+        url: "{{ item }}"
+        status_code: [200, 302, 401]
+        follow_redirects: safe
+        validate_certs: no
+        timeout: "{{ timeout_segundos }}"
+      loop: "{{ activemq_web_urls }}"
+      register: activemq_http
+      failed_when: false
+
+    - name: "ActiveMQ | resultado HTTP"
+      when: activemq_web_urls | length > 0
+      ansible.builtin.debug:
+        msg: "{{ item.item }} => HTTP {{ item.status | default('falha') }}"
+      loop: "{{ activemq_http.results | default([]) }}"
+
+    # ---------- SQL Server (TCP) ----------
+    - name: "SQL Server | teste TCP"
+      ansible.builtin.wait_for:
+        host: "{{ item.host }}"
+        port: "{{ item.port }}"
+        timeout: "{{ timeout_segundos }}"
+        state: started
+      loop: "{{ sqlserver_targets }}"
+      register: sql_tcp
+      failed_when: false
+
+    - name: "SQL Server | resultado TCP"
+      ansible.builtin.debug:
+        msg: "{{ item.item.name }} ({{ item.item.host }}:{{ item.item.port }}) => {{ 'OK' if (item.elapsed is defined) else 'FALHA' }}"
+      loop: "{{ sql_tcp.results | default([]) }}"
+
+    # ---------- (Opcional) Teste SQL real com sqlcmd ----------
+    - name: "SQL Server | checar se sqlcmd está disponível"
+      when: sql_login is defined
+      ansible.builtin.command: "bash -lc 'command -v sqlcmd || /opt/mssql-tools/bin/sqlcmd -?'"
+      register: sqlcmd_check
+      changed_when: false
+      failed_when: false
+
+    - name: "SQL Server | SELECT 1 (sqlcmd) — opcional"
+      when:
+        - sql_login is defined
+        - sqlcmd_check.rc == 0
+      ansible.builtin.shell: |
+        {{ (sqlcmd_check.stdout.find('/opt/mssql-tools/bin/sqlcmd') != -1)
+            | ternary('/opt/mssql-tools/bin/sqlcmd','sqlcmd') }} \
+          -S {{ sql_login.server }},{{ sql_login.port | default(1433) }} \
+          -U {{ sql_login.user }} -P '{{ sql_login.pass }}' -Q "SELECT 1"
+      register: sql_select
+      changed_when: false
+      failed_when: false
+
+    - name: "SQL Server | resultado SELECT 1"
+      when: sql_select is defined
+      ansible.builtin.debug:
+        msg: "sqlcmd SELECT 1 => rc={{ sql_select.rc }} {{ 'OK' if sql_select.rc == 0 else 'FALHA' }}"
+
+    # ---------- (Opcional) Traceroute ----------
+    - name: "TRACEROUTE | verificar utilitário"
+      when: do_traceroute
+      ansible.builtin.shell: "command -v traceroute || command -v tracepath || true"
+      register: trcmd
+      changed_when: false
+
+    - name: "TRACEROUTE | ActiveMQ"
+      when: do_traceroute and trcmd.stdout != ""
+      ansible.builtin.shell: >
+        {{ 'traceroute -n -q1 -w1 ' ~ item.host
+           if 'traceroute' in trcmd.stdout else
+           'tracepath -n -m 15 ' ~ item.host }}
+      loop: "{{ activemq_targets }}"
+      register: tr_mq
+      changed_when: false
+      failed_when: false
+
+    - name: "TRACEROUTE | SQL Server"
+      when: do_traceroute and trcmd.stdout != ""
+      ansible.builtin.shell: >
+        {{ 'traceroute -n -q1 -w1 ' ~ item.host
+           if 'traceroute' in trcmd.stdout else
+           'tracepath -n -m 15 ' ~ item.host }}
+      loop: "{{ sqlserver_targets }}"
+      register: tr_sql
+      changed_when: false
+      failed_when: false
+
+    - name: "TRACEROUTE | mostrar rotas MQ"
+      when: tr_mq is defined
+      ansible.builtin.debug:
+        var: tr_mq.results | map(attribute='stdout') | list
+
+    - name: "TRACEROUTE | mostrar rotas SQL"
+      when: tr_sql is defined
+      ansible.builtin.debug:
+        var: tr_sql.results | map(attribute='stdout') | list
