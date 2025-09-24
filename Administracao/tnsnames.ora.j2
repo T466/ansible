@@ -1,0 +1,14 @@
+# Gerado por Ansible – {{ ansible_date_time.iso8601 }}
+{% for a in aliases %}
+{{ a.name }} =
+  (DESCRIPTION =
+    (LOAD_BALANCE = ON)
+    (FAILOVER    = ON)
+    (ADDRESS_LIST =
+{% for h in scan_hosts %}
+      (ADDRESS = (PROTOCOL=TCP)(HOST={{ h }})(PORT={{ port }}))
+{% endfor %}
+    )
+    (CONNECT_DATA = (SERVICE_NAME = {{ a.service }}))
+  )
+{% endfor %}
