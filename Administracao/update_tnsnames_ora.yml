@@ -1,0 +1,45 @@
+---
+- name: Atualizar tnsnames.ora com HA (Data Guard)
+  hosts: oracle_clients
+  become: yes
+  gather_facts: no
+  serial: 10%   # atualiza em lotes; ajuste para 1, 5, 20%...
+
+  vars:
+    tns_admin_dir: /opt/oracle/network/admin   # ou $ORACLE_HOME/network/admin
+    port: 1521
+    scan_hosts:
+      - scan1.db.corp.local
+      - scan2.db.corp.local
+      - scan3.db.corp.local
+    aliases:                                    # services do Data Guard
+      - { name: "PROD_RW", service: "prod_rw.corp.local" }   # primary (read-write)
+      - { name: "PROD_RO", service: "prod_ro.corp.local" }   # standby/read-only
+
+  tasks:
+    - name: Garantir diretório TNS_ADMIN
+      ansible.builtin.file:
+        path: "{{ tns_admin_dir }}"
+        state: directory
+        owner: oracle
+        group: oinstall
+        mode: "0755"
+
+    - name: Publicar tnsnames.ora a partir de template (com backup)
+      ansible.builtin.template:
+        src: tnsnames.ora.j2
+        dest: "{{ tns_admin_dir }}/tnsnames.ora"
+        owner: oracle
+        group: oinstall
+        mode: "0644"
+        backup: yes
+      notify: validar-tns
+
+  handlers:
+    - name: validar-tns
+      become_user: oracle
+      ansible.builtin.shell: |
+        for a in {{ aliases | map(attribute='name') | join(' ') }}; do
+          echo "==> $a"; tnsping $a 2>/dev/null | tail -n 1 || true
+        done
+      changed_when: false
