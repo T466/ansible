@@ -1,0 +1,62 @@
+---
+- name: Backup PostgreSQL com pg_dump (dump + rotate + validate)
+  hosts: db_postgres            # grupo/inventário dos hosts de banco
+  become: yes
+  gather_facts: no
+  vars:
+    backup_dir: /var/backups/postgres
+    keep_days: 7
+    pg_host: "127.0.0.1"
+    pg_port: 5432
+    pg_db: "minha_base"
+    pg_user: "backup_user"
+    pg_password: "SENHA_FORTE_AQUI"   # ideal: usar Ansible Vault
+    ts: "{{ lookup('pipe','date +%Y%m%d-%H%M%S') }}"
+    dump_file: "{{ backup_dir }}/{{ pg_db }}_{{ inventory_hostname }}_{{ ts }}.dump"
+
+  tasks:
+    - name: Garantir diretório de backup
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: "0750"
+
+    - name: Gerar dump (-Fc) com pg_dump
+      ansible.builtin.command: >
+        pg_dump -h {{ pg_host }} -p {{ pg_port }}
+        -U {{ pg_user }} -d {{ pg_db }}
+        -F c -f {{ dump_file }}
+      environment:
+        PGPASSWORD: "{{ pg_password }}"
+      become_user: postgres
+      no_log: true
+
+    - name: Validar dump (lista conteúdo com pg_restore -l)
+      ansible.builtin.command: pg_restore -l {{ dump_file }}
+      become_user: postgres
+      register: dump_check
+      changed_when: false
+      failed_when: dump_check.rc != 0
+
+    - name: Comprimir (gzip) – opcional (pula se já .gz)
+      ansible.builtin.command: gzip -9 {{ dump_file }}
+      args:
+        creates: "{{ dump_file }}.gz"
+      become_user: postgres
+
+    - name: Rotacionar – apagar arquivos mais antigos que {{ keep_days }} dias
+      ansible.builtin.find:
+        paths: "{{ backup_dir }}"
+        patterns: "*.dump.gz,*.dump"
+        age: "{{ keep_days }}d"
+        age_stamp: mtime
+      register: old_dumps
+
+    - name: Remover antigos
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_dumps.files }}"
+      when: old_dumps.matched > 0
