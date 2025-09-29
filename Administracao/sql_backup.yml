@@ -1,0 +1,70 @@
+---
+- name: Backup FULL do SQL Server (Windows)
+  hosts: windows_sql
+  gather_facts: yes
+  collections:
+    - ansible.windows
+
+  vars:
+    sql_instance: "."                        # ex.: "MSSQLSERVER" ou "HOST\INSTANCIA"
+    databases: []                            # vazio = todas as user databases
+    backup_root: "D:\\Backups\\SQL"          # pasta raiz de backup
+    retention_days: 7                        # quantos dias manter .bak
+    allow_install_sqlserver_module: true     # instala módulo SqlServer via PSGallery, se faltar
+
+  tasks:
+    - name: Garantir pasta de backup
+      ansible.windows.win_file:
+        path: "{{ backup_root }}"
+        state: directory
+
+    - name: Garantir módulo SqlServer (Invoke-Sqlcmd) se permitido
+      ansible.windows.win_powershell:
+        script: |
+          $need = -not (Get-Module -ListAvailable -Name SqlServer)
+          if ($need) {
+            if (-not {{ allow_install_sqlserver_module | lower }}) {
+              throw "Módulo SqlServer ausente e instalação via PSGallery desabilitada."
+            }
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force | Out-Null
+            Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction SilentlyContinue
+            Install-Module -Name SqlServer -Force -Scope AllUsers
+          }
+      changed_when: false
+
+    - name: Executar backups FULL com compressão + retenção
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $instance = "{{ sql_instance }}"
+          $root = "{{ backup_root }}"
+          $stamp = Get-Date -Format 'yyyyMMdd_HHmm'
+          $dest = Join-Path $root $env:COMPUTERNAME
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+
+          # Descobrir lista de bancos
+          $dbs = @()
+          $dbJson = '{{ databases | to_json }}'
+          if ($dbJson -and $dbJson -ne '[]') {
+            $dbs = ($dbJson | ConvertFrom-Json)
+          } else {
+            $dbs = (Invoke-Sqlcmd -ServerInstance $instance -Database master -Query "SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name").Name
+          }
+
+          foreach ($db in $dbs) {
+            $file = Join-Path $dest "$($db)-$stamp.bak"
+            # FULL + COMPRESSION (se a edição suportar) + STATS
+            Invoke-Sqlcmd -ServerInstance $instance -Database master -Query "BACKUP DATABASE [$db] TO DISK=N''$file'' WITH INIT, COMPRESSION, STATS=10";
+          }
+
+          # Retenção
+          $cut = (Get-Date).AddDays(-{{ retention_days }})
+          Get-ChildItem -Path $dest -Filter *.bak | Where-Object { $_.LastWriteTime -lt $cut } | Remove-Item -Force
+
+          '{0} backup(s) gerados em {1}' -f $dbs.Count, $dest
+      register: backup_out
+
+    - name: Resumo
+      ansible.builtin.debug:
+        var: backup_out.stdout_lines
