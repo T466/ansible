@@ -1,0 +1,42 @@
+- name: Upgrade seguro do OpenResty (RHEL 8)
+  hosts: openresty
+  become: true
+  vars:
+    or_repo_url: "https://openresty.org/package/centos/openresty.repo"
+    or_repo_path: "/etc/yum.repos.d/openresty.repo"
+    pkgs: [ "openresty*", "openresty-resty", "openresty-opm" ]
+
+  pre_tasks:
+    - name: Garantir repositório do OpenResty
+      get_url:
+        url: "{{ or_repo_url }}"
+        dest: "{{ or_repo_path }}"
+        mode: "0644"
+
+    - name: Backup da configuração
+      archive:
+        path: /etc/openresty
+        dest: /root/openresty-conf-{{ ansible_date_time.iso8601_basic_short }}.tgz
+        format: gz
+      when: ansible_facts['os_family'] == 'RedHat'
+      tags: [backup]
+
+  tasks:
+    - name: Atualizar pacotes do OpenResty
+      dnf:
+        name: "{{ pkgs }}"
+        state: latest
+      notify: [ Testar configuração, Reiniciar OpenResty ]
+      tags: [upgrade]
+
+  handlers:
+    - name: Testar configuração
+      command: openresty -t
+      register: test_out
+      changed_when: false
+      failed_when: test_out.rc != 0
+
+    - name: Reiniciar OpenResty
+      service:
+        name: openresty
+        state: restarted
