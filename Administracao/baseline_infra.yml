@@ -1,0 +1,85 @@
+- name: Baseline de Infraestrutura (CPU, Memória, Discos, Rede)
+  hosts: all
+  gather_facts: true  # chama o módulo 'setup' automaticamente
+  vars:
+    # Onde os arquivos serão gravados no controlador (máquina que roda o Ansible)
+    baseline_out_dir: "/tmp/baseline"
+
+  pre_tasks:
+    - name: Garantir diretório de saída no controlador
+      file:
+        path: "{{ baseline_out_dir }}"
+        state: directory
+        mode: "0750"
+      delegate_to: localhost
+      run_once: true
+
+  tasks:
+    - name: Montar baseline por host
+      set_fact:
+        baseline:
+          host: "{{ inventory_hostname }}"
+          os:
+            family: "{{ ansible_os_family | default('') }}"
+            distro: "{{ ansible_distribution | default('') }}"
+            version: "{{ ansible_distribution_version | default('') }}"
+            kernel: "{{ ansible_kernel | default('') }}"
+          cpu:
+            model: "{{ (ansible_processor | default([])) | join(' ') }}"
+            vcpus: "{{ ansible_processor_vcpus | default(ansible_processor_cores) | default('') }}"
+          memory:
+            total_mb: "{{ ansible_memtotal_mb | default('') }}"
+            free_mb: "{{ ansible_memfree_mb | default('') }}"
+          disks:
+            mounts: >-
+              {{ (ansible_mounts | default([])) |
+                 map('extract', attribute='') | list }}
+            # O map acima garante lista crua; se preferir enxuto:
+            # mounts: {{ ansible_mounts | default([]) | map('combine', {'device': item.device, 'mount': item.mount, 'fstype': item.fstype, 'size_total': item.size_total, 'size_available': item.size_available}) }}
+          network:
+            hostname: "{{ ansible_hostname | default('') }}"
+            fqdn: "{{ ansible_fqdn | default('') }}"
+            interfaces: "{{ ansible_interfaces | default([]) }}"
+            ipv4_all: "{{ ansible_all_ipv4_addresses | default([]) }}"
+            default_ipv4: "{{ ansible_default_ipv4 | default({}) }}"
+          virt:
+            type: "{{ ansible_virtualization_type | default('') }}"
+            role: "{{ ansible_virtualization_role | default('') }}"
+          pkg_mgr: "{{ ansible_pkg_mgr | default('') }}"
+
+    - name: Salvar baseline JSON no controlador (um arquivo por host)
+      copy:
+        content: "{{ baseline | to_nice_json }}"
+        dest: "{{ baseline_out_dir }}/baseline_{{ inventory_hostname }}.json"
+        mode: "0640"
+      delegate_to: localhost
+      run_once: false
+
+    # (Opcional) Gerar um resumo CSV simples com os principais campos
+    - name: Preparar linhas para CSV (por host)
+      set_fact:
+        csv_line: >-
+          {{ inventory_hostname }},
+          {{ ansible_distribution | default('') }} {{ ansible_distribution_version | default('') }},
+          {{ ansible_processor_vcpus | default(ansible_processor_cores) | default('') }},
+          {{ ansible_memtotal_mb | default('') }},
+          {{ (ansible_all_ipv4_addresses | default([])) | join(' ') }}
+    - name: Agregar CSV no controlador
+      lineinfile:
+        path: "{{ baseline_out_dir }}/baseline_resumo.csv"
+        line: "{{ csv_line | regex_replace('\\s+', ' ') }}"
+        create: yes
+        mode: "0640"
+      delegate_to: localhost
+      run_once: false
+
+  # Cabeçalho do CSV (apenas uma vez)
+  post_tasks:
+    - name: Garantir cabeçalho no CSV
+      lineinfile:
+        path: "{{ baseline_out_dir }}/baseline_resumo.csv"
+        insertafter: BOF
+        line: "host,os,vcpus,mem_total_mb,ipv4s"
+        create: yes
+      delegate_to: localhost
+      run_once: true
