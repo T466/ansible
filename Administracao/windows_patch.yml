@@ -1,0 +1,55 @@
+---
+- name: Patch Tuesday com Ansible (Windows Update + reboot quando necessário)
+  hosts: windows
+  gather_facts: no
+  serial: 1          # atualiza 1 servidor por vez (ajuste p/ 2,3…)
+  collections:
+    - ansible.windows
+    - community.windows
+
+  vars:
+    categories:        # o que instalar
+      - SecurityUpdates
+      - CriticalUpdates
+    create_restore_point: true
+    exclude_drivers: true
+
+  pre_tasks:
+    - name: Criar restore point (opcional)
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = 'Stop'
+          Checkpoint-Computer -Description "Pre-Patch_Ansible" -RestorePointType "MODIFY_SETTINGS"
+      when: create_restore_point
+      changed_when: false
+
+  tasks:
+    - name: Instalar updates (Security/Critical) — sem drivers
+      community.windows.win_windows_update:
+        category_names: "{{ categories }}"
+        state: installed
+        reject_list: []              # adicione KBs para rejeitar, se quiser
+        accept_list: []              # ou obrigatórios
+        log_path: C:\Windows\Temp\ansible-wu.log
+        reboot: no                   # reboot manual controlado abaixo
+        drivers: "{{ (exclude_drivers | bool) | ternary('exclude','include') }}"
+      register: wu
+
+    - name: Mostrar updates instalados
+      ansible.builtin.debug:
+        msg:
+          - "Host: {{ inventory_hostname }}"
+          - "Instalados: {{ (wu.updates | default([])) | map(attribute='title') | list }}"
+          - "Reboot necessário? {{ wu.reboot_required | default(false) }}"
+
+    - name: Reboot se necessário
+      ansible.windows.win_reboot:
+        reboot_timeout: 3600
+      when: wu.reboot_required | default(false)
+
+    - name: Validação pós-reboot (serviços críticos sobem?)
+      ansible.windows.win_service_info:
+        name: w32time
+      register: svc
+    - ansible.builtin.debug:
+        msg: "w32time status: {{ svc.services[0].state | default('unknown') }}"
