@@ -1,0 +1,41 @@
+
+- hosts: mysql
+  become: true
+  vars:
+    backup_dir: /var/backups/mysql
+    keep_days: 7
+    sys_dbs: [information_schema, performance_schema, mysql, sys]
+    mysql_socket_map:
+      Debian: /var/run/mysqld/mysqld.sock
+      RedHat: /var/lib/mysql/mysql.sock
+      Suse: /var/run/mysql/mysql.sock
+
+  tasks:
+    - name: Garantir diretório por host
+      ansible.builtin.file:
+        path: "{{ backup_dir }}/{{ inventory_hostname }}"
+        state: directory
+        mode: "0750"
+
+    - name: Listar bancos
+      community.mysql.mysql_info:
+        login_unix_socket: "{{ mysql_socket_map[ansible_facts.os_family] | default('/var/lib/mysql/mysql.sock') }}"
+        filter: databases
+      register: dbinfo
+
+    - name: Dump + compressão por banco
+      ansible.builtin.shell: >
+        mysqldump --single-transaction --routines --triggers --events {{ item }}
+        | gzip > {{ backup_dir }}/{{ inventory_hostname }}/{{ item }}-{{ ansible_date_time.iso8601_basic }}.sql.gz
+      args: {executable: /bin/bash}
+      loop: "{{ dbinfo.databases | difference(sys_dbs) }}"
+      tags: backup
+
+    - name: Remover backups antigos
+      ansible.builtin.find:
+        paths: "{{ backup_dir }}/{{ inventory_hostname }}"
+        patterns: "*.sql.gz"
+        age: "{{ keep_days }}d"
+      register: old
+    - ansible.builtin.file: {path: "{{ item.path }}", state: absent}
+      loop: "{{ old.files }}"
