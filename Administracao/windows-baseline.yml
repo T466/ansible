@@ -1,0 +1,87 @@
+- name: Windows baseline (apps, features, firewall, updates)
+  hosts: windows
+  gather_facts: yes
+  vars:
+    backup_dir: 'C:\Ops\Logs'
+
+  tasks:
+    - name: Garantir diretórios operacionais
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - "{{ backup_dir }}"
+        - 'C:\Ops\Scripts'
+      tags: [baseline]
+
+    - name: Definir timezone
+      ansible.windows.win_timezone:
+        timezone: "{{ windows_timezone }}"
+      tags: [baseline]
+
+    - name: Instalar Chocolatey (se não existir)
+      ansible.windows.win_chocolatey:
+        name: chocolatey
+        state: present
+      tags: [packages]
+
+    - name: Instalar pacotes via Chocolatey
+      ansible.windows.win_chocolatey:
+        name: "{{ choco_packages }}"
+        state: present
+      tags: [packages]
+
+    - name: Habilitar/desabilitar recursos do Windows
+      ansible.windows.win_feature:
+        name: "{{ item.Name }}"
+        state: "{{ item.State | default('present') }}"
+        include_sub_features: yes
+      loop: "{{ windows_features }}"
+      register: features
+      tags: [features]
+
+    - name: Aplicar regras de firewall
+      ansible.windows.win_firewall_rule:
+        name: "{{ item.name }}"
+        localport: "{{ item.localport }}"
+        protocol: "{{ item.protocol }}"
+        direction: "{{ item.direction }}"
+        action: "{{ item.action }}"
+        state: "{{ item.state }}"
+        enabled: "{{ item.enabled }}"
+      loop: "{{ firewall_rules }}"
+      tags: [firewall, compliance]
+
+    - name: Criar usuário operacional local
+      ansible.windows.win_user:
+        name: svc_ansible
+        password: "{{ 'Troque@123' | password_hash('sha512') }}"
+        state: present
+        groups:
+          - Administrators
+      tags: [baseline]
+
+    - name: Garantir membros do grupo Administrators
+      ansible.windows.win_group_membership:
+        name: Administrators
+        members:
+          - svc_ansible
+        state: present
+      tags: [baseline]
+
+    - name: Verificar e instalar atualizações críticas/segurança
+      ansible.windows.win_updates:
+        category_names:
+          - CriticalUpdates
+          - SecurityUpdates
+        reboot: yes            # reinicia automaticamente se necessário
+        reboot_timeout: 3600
+      register: updates
+      tags: [updates]
+
+    - name: Registrar log simples de execução
+      ansible.windows.win_lineinfile:
+        path: "{{ backup_dir }}\\baseline.log"
+        line: "[{{ ansible_date_time.iso8601 }}] updates={{ updates.installed_update_count | default(0) }} rebooted={{ updates.rebooted | default(false) }}"
+        create: yes
+      tags: [baseline, updates]
