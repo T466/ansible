@@ -1,0 +1,24 @@
+aws_region: sa-east-1              # região (ex.: São Paulo)
+aws_profile: default               # perfil do ~/.aws/credentials
+
+lt_name: lt-ansible-web            # nome do Launch Template já existente
+lt_version: "$Latest"              # ou um número ex.: "3"
+
+instance_count: 1
+subnet_id: subnet-0123456789abcdef0   # opcional se já estiver no LT
+security_group_ids:                  # opcional se já estiver no LT
+  - sg-0123456789abcdef0
+key_name: my-keypair                 # opcional se já estiver no LT
+iam_instance_profile: EC2-SSM-Role   # opcional
+assign_public_ip: true               # só se precisar
+
+tags:
+  Name: web-ansible
+  Project: T466
+  Env: dev
+
+# Opcional: cloud-init
+user_data: |
+  #cloud-config
+  runcmd:
+    - [ sh, -lc, "echo Provisionado via Ansible > /etc/motd" ]
