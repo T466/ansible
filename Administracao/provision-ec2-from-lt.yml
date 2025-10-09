@@ -1,0 +1,65 @@
+- name: Provisionar EC2 via Launch Template
+  hosts: localhost
+  gather_facts: false
+  vars_files: [vars/aws_lt.yml]
+  collections: [amazon.aws]
+  tasks:
+    - name: Criar instâncias a partir do Launch Template
+      amazon.aws.ec2_instance:
+        name: "{{ tags.Name }}"
+        count: "{{ instance_count }}"
+        state: started
+        region: "{{ aws_region }}"
+        profile: "{{ aws_profile }}"
+        launch_template:
+          name: "{{ lt_name }}"
+          version: "{{ lt_version }}"
+        vpc_subnet_id: "{{ subnet_id | default(omit) }}"
+        security_group_ids: "{{ security_group_ids | default(omit) }}"
+        key_name: "{{ key_name | default(omit) }}"
+        instance_role: "{{ iam_instance_profile | default(omit) }}"
+        network:
+          assign_public_ip: "{{ assign_public_ip | default(false) }}"
+        user_data: "{{ user_data | default(omit) }}"
+        tags: "{{ tags }}"
+        wait: true
+      register: ec2_out
+
+    - name: Mostrar IPs criados
+      debug:
+        msg: "Instance {{ item.id }} -> public={{ item.public_ip_address | default('n/a') }}, private={{ item.private_ip_address }}"
+      loop: "{{ ec2_out.instances }}"
+
+    - name: Adicionar hosts criados ao inventário desta execução
+      add_host:
+        name: "{{ item.public_dns_name | default(item.private_ip_address) }}"
+        groups: new_ec2
+        ansible_user: "{{ ec2_ssh_user | default('ec2-user') }}"
+      loop: "{{ ec2_out.instances }}"
+
+- name: Pós-provisionamento (exemplo)
+  hosts: new_ec2
+  become: true
+  gather_facts: yes
+  tasks:
+    - name: Esperar SSH ficar disponível
+      wait_for_connection:
+        timeout: 600
+
+    - name: Atualizar pacotes
+      package:
+        name: "*"
+        state: latest
+
+    - name: Instalar Nginx (exemplo)
+      package:
+        name: nginx
+        state: present
+      notify: start nginx
+
+  handlers:
+    - name: start nginx
+      service:
+        name: nginx
+        state: started
+        enabled: true
