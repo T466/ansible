@@ -1,0 +1,204 @@
+- name: Linux Infra Baseline (multi-distro)
+  hosts: linux
+  become: true
+  gather_facts: true
+  serial: 10
+  max_fail_percentage: 10
+
+  vars_files:
+    - group_vars/linux.yml
+
+  pre_tasks:
+    - name: Atualizar cache APT (Debian/Ubuntu)
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_facts.os_family == "Debian"
+      tags: [updates]
+
+  tasks:
+    - name: Criar usuário operacional
+      ansible.builtin.user:
+        name: "{{ ops_user }}"
+        groups: "{{ 'wheel' if ansible_facts.os_family in ['RedHat','Suse'] else 'sudo' }}"
+        shell: /bin/bash
+        state: present
+        create_home: yes
+      tags: [baseline,security]
+
+    - name: Autorizar chave SSH do usuário operacional
+      ansible.posix.authorized_key:
+        user: "{{ ops_user }}"
+        state: present
+        key: "{{ ops_pubkey }}"
+      tags: [baseline,security]
+
+    - name: Permitir sudo sem senha para o usuário (opcional)
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/{{ ops_user }}"
+        mode: "0440"
+        content: "{{ ops_user }} ALL=(ALL) NOPASSWD:ALL\n"
+      tags: [baseline,security]
+
+    - name: Definir timezone
+      community.general.timezone:
+        name: "{{ timezone }}"
+      tags: [baseline]
+
+    - name: Instalar pacotes básicos
+      ansible.builtin.package:
+        name:
+          - vim
+          - curl
+          - wget
+          - rsync
+          - net-tools
+          - tar
+          - unzip
+          - htop
+        state: present
+      tags: [baseline]
+
+    - name: Instalar Chrony (NTP)
+      ansible.builtin.package:
+        name: chrony
+        state: present
+      tags: [baseline]
+
+    - name: Habilitar e iniciar Chrony
+      ansible.builtin.service:
+        name: "{{ chrony_service[ansible_facts.os_family] | default('chronyd') }}"
+        state: started
+        enabled: true
+      tags: [baseline]
+
+    - name: Hardening do SSH (sem root/password)
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regex }}"
+        line: "{{ item.line }}"
+        create: no
+        backup: yes
+      loop:
+        - {regex: '^#?PermitRootLogin.*', line: 'PermitRootLogin no'}
+        - {regex: '^#?PasswordAuthentication.*', line: 'PasswordAuthentication no'}
+        - {regex: '^#?PubkeyAuthentication.*', line: 'PubkeyAuthentication yes'}
+      notify: restart ssh
+      tags: [security]
+
+    - name: Journald persistente
+      ansible.builtin.lineinfile:
+        path: /etc/systemd/journald.conf
+        regexp: '^#?Storage='
+        line: 'Storage=persistent'
+      notify: restart journald
+      tags: [baseline]
+
+    # ---------------- FIREWALL ----------------
+    - name: Instalar firewalld em RedHat/Suse
+      ansible.builtin.package:
+        name: firewalld
+        state: present
+      when: ansible_facts.os_family in ['RedHat', 'Suse']
+      tags: [firewall,compliance]
+
+    - name: Habilitar firewalld
+      ansible.builtin.service:
+        name: firewalld
+        state: started
+        enabled: true
+      when: ansible_facts.os_family in ['RedHat', 'Suse']
+      tags: [firewall,compliance]
+
+    - name: Abrir portas no firewalld
+      ansible.posix.firewalld:
+        port: "{{ item.port }}/{{ item.proto }}"
+        permanent: true
+        state: enabled
+        immediate: true
+        zone: public
+      loop: "{{ open_ports }}"
+      when: ansible_facts.os_family in ['RedHat', 'Suse']
+      tags: [firewall,compliance]
+
+    - name: Instalar UFW em Debian/Ubuntu
+      ansible.builtin.package:
+        name: ufw
+        state: present
+      when: ansible_facts.os_family == 'Debian'
+      tags: [firewall,compliance]
+
+    - name: Regras UFW (allow)
+      community.general.ufw:
+        rule: allow
+        port: "{{ item.port }}"
+        proto: "{{ item.proto }}"
+      loop: "{{ open_ports }}"
+      when: ansible_facts.os_family == 'Debian'
+      tags: [firewall,compliance]
+
+    - name: Habilitar UFW com política padrão (deny in)
+      community.general.ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+      when: ansible_facts.os_family == 'Debian'
+      tags: [firewall,compliance]
+
+    # ---------------- UPDATES ----------------
+    - name: Atualizar pacotes (DNF)
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+      when: ansible_facts.os_family == "RedHat"
+      register: upd_dnf
+      tags: [updates]
+
+    - name: Atualizar pacotes (Zypper)
+      community.general.zypper:
+        name: '*'
+        state: latest
+      when: ansible_facts.os_family == "Suse"
+      register: upd_zypper
+      tags: [updates]
+
+    - name: Upgrade completo (APT)
+      ansible.builtin.apt:
+        upgrade: dist
+      when: ansible_facts.os_family == "Debian"
+      register: upd_apt
+      tags: [updates]
+
+    - name: Reboot se necessário (mudanças de update)
+      ansible.builtin.reboot:
+        reboot_timeout: 1800
+      when: (upd_dnf is changed) or (upd_zypper is changed) or (upd_apt is changed)
+      tags: [updates]
+
+    # -------------- MONITORAÇÃO (opcional) --------------
+    - name: Instalar node_exporter (repo/packager onde existir)
+      ansible.builtin.package:
+        name: "{{ 'prometheus-node-exporter' if ansible_facts.os_family == 'Debian' else 'node_exporter' }}"
+        state: present
+      when: install_node_exporter
+      tags: [monitoring]
+
+    - name: Garantir node_exporter ativo
+      ansible.builtin.service:
+        name: "{{ 'prometheus-node-exporter' if ansible_facts.os_family == 'Debian' else 'node_exporter' }}"
+        state: started
+        enabled: true
+      when: install_node_exporter
+      tags: [monitoring]
+
+  handlers:
+    - name: restart ssh
+      ansible.builtin.service:
+        name: sshd
+        state: restarted
+      listen: restart ssh
+    - name: restart journald
+      ansible.builtin.service:
+        name: systemd-journald
+        state: restarted
+      listen: restart journald
