@@ -1,0 +1,18 @@
+timezone: "America/Sao_Paulo"
+ops_user: "ops"
+ops_pubkey: "ssh-ed25519 AAAA...troque-aqui"
+
+# Ports que devem ficar abertos
+open_ports:
+  - {port: 22,  proto: tcp, name: "ssh"}
+  # - {port: 9092, proto: tcp, name: "kafka"}
+
+# Service names por família
+chrony_service:
+  Debian: chrony
+  RedHat: chronyd
+  Suse: chronyd
+
+# Monitoração (opcional)
+install_node_exporter: false
+node_exporter_port: 9100
