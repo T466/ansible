@@ -1,0 +1,35 @@
+- name: Health-check diário
+  hosts: linux
+  become: true
+  gather_facts: true
+  vars:
+    critical_services: [sshd, zabbix-agent2, nginx]
+    disk_warn: 80
+    disk_crit: 90
+  tasks:
+    - name: Garantir serviços críticos
+      service:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop: "{{ critical_services }}"
+
+    - name: Uso de disco /
+      command: df -P -h /
+      register: dfroot
+      changed_when: false
+
+    - name: Limpeza leve se crítico
+      when: "(dfroot.stdout_lines[-1].split()[4] | regex_replace('%','')) | int >= disk_crit"
+      block:
+        - command: journalctl --vacuum-size=1G
+        - file:
+            path: /var/tmp/*
+            state: absent
+      rescue:
+        - debug: msg="Limpeza pulada"
+
+    - name: NTP sincronizado?
+      command: chronyc tracking
+      register: ntp
+      changed_when: false
