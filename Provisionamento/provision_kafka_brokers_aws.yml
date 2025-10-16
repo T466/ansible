@@ -1,0 +1,204 @@
+---
+- name: Provisionar novos brokers Kafka na AWS a partir de Launch Template
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  collections:
+    - amazon.aws
+
+  vars:
+    # ===== REGIÃO E REDE =====
+    aws_region: "sa-east-1"
+    vpc_subnet_id: "subnet-xxxxxxxx"
+    security_group_ids: ["sg-xxxxxxxx"]
+
+    # ===== QUANTIDADE / NOMES =====
+    broker_count: 3
+    name_prefix: "kfk-broker"
+    name_suffix: "-prd"
+    index_start: 1
+
+    # ===== TEMPLATE DE INSTÂNCIA (opção preferida) =====
+    use_launch_template: true
+    launch_template_name: "lt-kafka-base"   # ou defina launch_template_id
+    launch_template_version: "$Latest"
+
+    # ===== AMI (caso NÃO use Launch Template) =====
+    use_ami: false
+    ami_id: "ami-xxxxxxxxxxxxxxxxx"
+    instance_type: "t3.large"
+    key_name: "chave-ssh"
+
+    # ===== IPs PRIVADOS ESTÁTICOS (opcional) =====
+    # Se vazio, usa IP dinâmico da subnet
+    private_ips: []  # ex.: ["10.0.10.21","10.0.10.22","10.0.10.23"]
+
+    # ===== DISCO DE DADOS (seu template já deve tratá-lo; aqui é só referência) =====
+    data_mount: "/var/lib/kafka"
+
+    # ===== USUÁRIO SSH =====
+    ansible_ssh_user: "ec2-user"
+
+    # ===== TAGS =====
+    common_tags:
+      Role: "kafka-broker"
+      Env: "prod"
+      ManagedBy: "ansible"
+
+  tasks:
+    - name: Provisionar instâncias a partir do Launch Template (ou AMI)
+      amazon.aws.ec2_instance:
+        region: "{{ aws_region }}"
+        count: "{{ broker_count }}"
+        instance_type: "{{ instance_type if use_ami else omit }}"
+        key_name: "{{ key_name if use_ami else omit }}"
+        image_id: "{{ ami_id if use_ami else omit }}"
+        launch_template:
+          name: "{{ launch_template_name }}"
+          version: "{{ launch_template_version }}"
+        vpc_subnet_id: "{{ vpc_subnet_id }}"
+        security_group_ids: "{{ security_group_ids }}"
+        network:
+          assign_public_ip: false
+        # Colocamos tags inclusive Name, com índice
+        tags: "{{ common_tags }}"
+        name: "{{ name_prefix }}-{{ '%02d' | format(index_start + item) }}{{ name_suffix }}"
+        wait: true
+      loop: "{{ range(0, broker_count) | list }}"
+      register: ec2_out
+
+    - name: Atribuir IP estático (se lista fornecida) — via interface primária
+      when: private_ips | length >= (index_start + item)
+      amazon.aws.ec2_eni:
+        region: "{{ aws_region }}"
+        state: present
+        eni_id: "{{ ec2_out.results[item].instances[0].network_interfaces[0].id }}"
+        private_ip_address: "{{ private_ips[index_start + item - 1] }}"
+      loop: "{{ range(0, broker_count) | list }}"
+      loop_control:
+        label: "{{ name_prefix }}-{{ '%02d' | format(index_start + item) }}{{ name_suffix }}"
+      register: ip_pin
+      failed_when: false
+
+    - name: Montar lista de hosts + IPs
+      set_fact:
+        new_hosts: >-
+          {{
+            ec2_out.results
+            | map(attribute='instances')
+            | map('first')
+            | list
+          }}
+
+    - name: Registrar novos brokers no inventário dinâmico
+      add_host:
+        name: "{{ item.tags.Name }}"
+        groups: ["kafka_new_brokers"]
+        ansible_host: >-
+          {{
+            (private_ips | length >= (index_start + idx))
+            | ternary(private_ips[index_start + idx - 1], item.private_ip_address)
+          }}
+        private_ip: >-
+          {{
+            (private_ips | length >= (index_start + idx))
+            | ternary(private_ips[index_start + idx - 1], item.private_ip_address)
+          }}
+        ansible_user: "{{ ansible_ssh_user }}"
+      loop: "{{ new_hosts | list }}"
+      loop_control:
+        index_var: idx
+
+- name: Ajustar parâmetros mínimos e colocar no cluster Kafka
+  hosts: kafka_new_brokers
+  become: true
+  gather_facts: true
+
+  vars:
+    kafka_conf_dir: "/etc/kafka"
+    kafka_service_name: "kafka"
+
+    # Detecta broker_id a partir do sufixo numérico do hostname
+    # Ex.: kfk-broker-01-prd -> 1
+    broker_id: "{{ inventory_hostname | regex_search('(\\d+)(?=\\D*$)') | int }}"
+
+    # Listeners — ajuste portas/protocolos conforme seu template
+    kafka_port: 9092
+    kafka_host: "{{ hostvars[inventory_hostname].private_ip | default(ansible_default_ipv4.address) }}"
+    listeners: "PLAINTEXT://0.0.0.0:{{ kafka_port }}"
+    advertised_listeners: "PLAINTEXT://{{ kafka_host }}:{{ kafka_port }}"
+
+    # Escolha seu modo de cluster:
+    use_kraft: true
+    # Para KRaft, o template já deve conter binários e service preparados.
+    cluster_id_file: "/etc/kafka/cluster.id"  # deixe criado no template ou gerado previamente
+    # Para ZooKeeper (se não usar KRaft):
+    zookeeper_connect: "zk-1:2181,zk-2:2181,zk-3:2181"
+
+    data_mount: "/var/lib/kafka"
+
+  tasks:
+    - name: Garantir diretório de dados
+      file:
+        path: "{{ data_mount }}"
+        state: directory
+        owner: kafka
+        group: kafka
+        mode: "0755"
+
+    - name: Ajustar broker.id em server.properties
+      lineinfile:
+        path: "{{ kafka_conf_dir }}/server.properties"
+        regexp: '^broker.id='
+        line: "broker.id={{ broker_id }}"
+        backrefs: false
+
+    - name: Ajustar listeners
+      lineinfile:
+        path: "{{ kafka_conf_dir }}/server.properties"
+        regexp: '^listeners='
+        line: "listeners={{ listeners }}"
+        backrefs: false
+
+    - name: Ajustar advertised.listeners
+      lineinfile:
+        path: "{{ kafka_conf_dir }}/server.properties"
+        regexp: '^advertised.listeners='
+        line: "advertised.listeners={{ advertised_listeners }}"
+        backrefs: false
+
+    - name: (KRaft) garantir cluster.id presente
+      when: use_kraft
+      stat:
+        path: "{{ cluster_id_file }}"
+      register: kraft_id
+
+    - name: (KRaft) inserir cluster.id no server.properties (seu template pode já conter)
+      when: use_kraft and kraft_id.stat.exists
+      lineinfile:
+        path: "{{ kafka_conf_dir }}/server.properties"
+        regexp: '^process.roles='
+        line: "process.roles=broker,controller"
+        backrefs: false
+
+    - name: (KRaft) remover zookeeper.connect se presente
+      when: use_kraft
+      lineinfile:
+        path: "{{ kafka_conf_dir }}/server.properties"
+        regexp: '^zookeeper.connect='
+        state: absent
+
+    - name: (ZooKeeper) configurar zookeeper.connect (se não usar KRaft)
+      when: not use_kraft
+      lineinfile:
+        path: "{{ kafka_conf_dir }}/server.properties"
+        regexp: '^zookeeper.connect='
+        line: "zookeeper.connect={{ zookeeper_connect }}"
+        backrefs: false
+
+    - name: Reiniciar Kafka para aplicar configurações
+      systemd:
+        name: "{{ kafka_service_name }}"
+        state: restarted
+        enabled: true
