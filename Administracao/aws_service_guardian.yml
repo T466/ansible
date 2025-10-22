@@ -1,0 +1,228 @@
+---
+- name: Guardião de serviços | AWS
+  hosts: all
+  become: yes
+  gather_facts: yes
+
+  vars:
+    # === AJUSTE AQUI ===
+    services_to_guard: [httpd, nginx, zabbix-agent, oracle]   # troque "oracle" pelo unit real se necessário
+    restart_policy: "on-failure"
+    restart_sec: 5
+    start_limit_interval_sec: 60
+    start_limit_burst: 3
+
+    central_logging_enabled: true
+    central_logging_server: "10.10.10.50"   # IP/hostname do seu syslog/ELK/Graylog
+    central_logging_port: 514
+    central_logging_proto: "udp"            # "udp" ou "tcp"
+
+    health_check_interval_seconds: 60
+    slack_webhook_url: ""                   # opcional: "https://hooks.slack.com/services/XXX/YYY/ZZZ"
+    use_zabbix_sender: false
+    zabbix_sender_bin: "/usr/bin/zabbix_sender"
+    zabbix_server: "10.10.10.60"
+    zabbix_host: "{{ inventory_hostname }}"
+
+  handlers:
+    - name: systemd daemon-reload
+      ansible.builtin.systemd:
+        daemon_reload: yes
+
+    - name: restart rsyslog
+      ansible.builtin.service:
+        name: rsyslog
+        state: restarted
+
+    - name: restart guarded services
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: restarted
+      loop: "{{ services_to_guard }}"
+
+  tasks:
+    - name: Ensure minimal deps
+      ansible.builtin.package:
+        name:
+          - systemd
+          - rsyslog
+          - curl               # para alertas Slack
+          - policycoreutils-python-utils  # semanage (RHEL/OL/CentOS)
+        state: present
+      register: pkgs
+      failed_when: false
+
+    - name: Criar drop-in de override para cada serviço
+      block:
+        - name: Criar diretório drop-in
+          ansible.builtin.file:
+            path: "/etc/systemd/system/{{ item }}.service.d"
+            state: directory
+            owner: root
+            group: root
+            mode: "0755"
+          loop: "{{ services_to_guard }}"
+
+        - name: Instalar override com Restart={{ restart_policy }}
+          ansible.builtin.copy:
+            dest: "/etc/systemd/system/{{ item }}.service.d/override.conf"
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              [Service]
+              Restart={{ restart_policy }}
+              RestartSec={{ restart_sec }}
+              StartLimitIntervalSec={{ start_limit_interval_sec }}
+              StartLimitBurst={{ start_limit_burst }}
+          loop: "{{ services_to_guard }}"
+          notify: [systemd daemon-reload, restart guarded services]
+      rescue:
+        - name: Avisar que algum serviço pode não existir
+          ansible.builtin.debug:
+            msg: "Alguns serviços podem não existir nesta instância; seguiremos com os demais."
+
+    - name: Habilitar e iniciar serviços existentes
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      register: svc_start
+      failed_when: false
+      loop: "{{ services_to_guard }}"
+
+    - name: Reportar serviços ausentes
+      ansible.builtin.debug:
+        msg: "Serviço {{ item.item }} não encontrado/gerenciável nesta instância."
+      loop: "{{ svc_start.results | default([]) }}"
+      when: item is defined and (item.failed | default(false))
+
+    # ===================== LOGS CENTRALIZADOS (rsyslog) =====================
+    - name: Habilitar rsyslog e forwarding
+      when: central_logging_enabled | bool
+      block:
+        - name: Garantir rsyslog habilitado e iniciado
+          ansible.builtin.service:
+            name: rsyslog
+            state: started
+            enabled: yes
+
+        - name: Configurar encaminhamento para servidor central
+          ansible.builtin.copy:
+            dest: /etc/rsyslog.d/10-forwarding.conf
+            owner: root
+            group: root
+            mode: "0644"
+            content: |
+              # Template com hostname + tag
+              $template Tmpl,"<%pri%> %timestamp:::date-rfc3339% {{ inventory_hostname }} %syslogtag%%msg%\n"
+
+              module(load="imuxsock")
+              module(load="imjournal" StateFile="imjournal.state")
+
+              *.* action(
+                type="omfwd"
+                target="{{ central_logging_server }}"
+                port="{{ central_logging_port }}"
+                protocol="{{ central_logging_proto }}"
+                Template="Tmpl"
+                queue.type="LinkedList"
+                queue.size="10000"
+                queue.dequeueBatchSize="1000"
+                action.resumeRetryCount="-1"
+              )
+          notify: restart rsyslog
+
+        - name: (SELinux) Permitir porta do syslog se necessário
+          ansible.builtin.command: "semanage port -a -t syslogd_port_t -p {{ central_logging_proto }} {{ central_logging_port }}"
+          register: semanage_out
+          changed_when: semanage_out.rc == 0
+          failed_when: false
+          when: ansible_selinux is defined and ansible_selinux.status == 'enabled'
+
+    # ===================== CHECKER + ALERTAS =====================
+    - name: Instalar script de checagem de serviços
+      ansible.builtin.copy:
+        dest: /usr/local/bin/check_services.sh
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+          SERVICES=({{ services_to_guard | join(' ') }})
+          SLACK="{{ slack_webhook_url }}"
+          USE_ZBX={{ '1' if use_zabbix_sender else '0' }}
+          ZBX_BIN="{{ zabbix_sender_bin }}"
+          ZBX_SRV="{{ zabbix_server }}"
+          ZBX_HOST="{{ zabbix_host }}"
+          HOSTNAME="$(hostname -f 2>/dev/null || hostname)"
+
+          for SVC in "${SERVICES[@]}"; do
+            if systemctl list-unit-files --type=service | awk '{print $1}' | grep -q "^${SVC}\.service$"; then
+              if ! systemctl is-active --quiet "$SVC"; then
+                MSG="ALERTA: Serviço ${SVC} INATIVO em ${HOSTNAME}"
+                # log local (seguirá para rsyslog central)
+                logger -t svc_guard -p user.error "$MSG"
+                # Slack opcional
+                if [[ -n "$SLACK" ]]; then
+                  curl -sS -X POST -H 'Content-type: application/json' \
+                    --data "{\"text\":\"${MSG}\"}" "$SLACK" >/dev/null || true
+                fi
+                # Zabbix opcional (0 = down)
+                if [[ "$USE_ZBX" == "1" && -x "$ZBX_BIN" ]]; then
+                  "$ZBX_BIN" -z "$ZBX_SRV" -s "$ZBX_HOST" -k "service.status[${SVC}]" -o "0" >/dev/null 2>&1 || true
+                fi
+              else
+                # Zabbix opcional (1 = up)
+                if [[ "$USE_ZBX" == "1" && -x "$ZBX_BIN" ]]; then
+                  "$ZBX_BIN" -z "$ZBX_SRV" -s "$ZBX_HOST" -k "service.status[${SVC}]" -o "1" >/dev/null 2>&1 || true
+                fi
+              fi
+            fi
+          done
+
+    - name: Criar systemd service do checker
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/svc-health-check.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Service health check ({{ services_to_guard | join(', ') }})
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/check_services.sh
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Criar systemd timer do checker
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/svc-health-check.timer
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Run service health check every {{ health_check_interval_seconds }}s
+
+          [Timer]
+          OnBootSec=30
+          OnUnitActiveSec={{ health_check_interval_seconds }}
+          AccuracySec=1s
+          Unit=svc-health-check.service
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Ativar timer do checker
+      ansible.builtin.systemd:
+        daemon_reload: yes
+        name: svc-health-check.timer
+        state: started
+        enabled: yes
