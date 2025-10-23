@@ -1,0 +1,14 @@
+- name: Ensure CUPS is running
+  hosts: print_servers
+  become: yes
+  tasks:
+    - name: Check CUPS status
+      shell: systemctl is-active cups
+      register: cups_status
+      ignore_errors: yes
+
+    - name: Restart CUPS if inactive
+      when: cups_status.stdout != "active"
+      service:
+        name: cups
+        state: restarted
