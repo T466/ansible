@@ -1,0 +1,31 @@
+# check_config.yml
+- hosts: "{{ target }}"
+  become: yes
+  vars:
+    golden_sum: "c0ffee...sha256_esperado"  # opcional: vindo de Vault
+  tasks:
+    - name: Obter hash do arquivo atual
+      ansible.builtin.stat:
+        path: "{{ file_path }}"
+        checksum_algorithm: sha256
+      register: st
+
+    - name: Reportar mudança
+      ansible.builtin.debug:
+        msg: "Config mudou! sum_atual={{ st.stat.checksum }}"
+      when: st.stat.checksum is defined and st.stat.checksum != golden_sum
+
+    - name: Reconciliar (opcional): aplicar padrão
+      ansible.builtin.template:
+        src: "templates/webapp.conf.j2"
+        dest: "{{ file_path }}"
+        owner: root
+        group: root
+        mode: '0644'
+      when: st.stat.checksum is defined and st.stat.checksum != golden_sum
+
+    - name: Notificar serviço
+      ansible.builtin.service:
+        name: webapp
+        state: reloaded
+      when: st.stat.checksum is defined and st.stat.checksum != golden_sum
