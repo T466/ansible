@@ -1,0 +1,25 @@
+# rulebook.yml
+sources:
+  - name: datadog
+    ansible.eda.webhook:
+      host: 0.0.0.0
+      port: 5000
+
+rules:
+  - name: restart app when service is down
+    condition: event.alert_type == "error" and "app:web" in event.tags
+    action:
+      run_playbook:
+        name: playbooks/restart_app.yml
+        extra_vars:
+          target: "{{ event.host }}"
+          service_name: "webapp"
+
+  - name: check config change
+    condition: "'config_change' in event.tags or event.event_type == 'config_change'"
+    action:
+      run_playbook:
+        name: playbooks/check_config.yml
+        extra_vars:
+          target: "{{ event.host }}"
+          file_path: "/etc/webapp/webapp.conf"
