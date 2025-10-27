@@ -1,0 +1,17 @@
+# restart_app.yml
+- hosts: "{{ target }}"
+  become: yes
+  tasks:
+    - name: Garantir serviço ativo
+      ansible.builtin.service:
+        name: "{{ service_name }}"
+        state: restarted
+    - name: Checar saúde pós-restart
+      ansible.builtin.uri:
+        url: "http://localhost:8080/health"
+        return_content: yes
+      register: health
+    - name: Falhar se não saudável
+      ansible.builtin.fail:
+        msg: "Healthcheck falhou: {{ health.status }}"
+      when: health.status != 200
