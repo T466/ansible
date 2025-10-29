@@ -1,0 +1,57 @@
+---
+# Requer: _snapshot_prefix, _azure_subscription_id, _azure_resource_group, _azure_vm_name
+
+- name: Gerar nome único para snapshot
+  ansible.builtin.set_fact:
+    snapshot_name: "{{ _snapshot_prefix }}-{{ ansible_date_time.iso8601_basic_short }}"
+
+- name: Obter ID do disco do SO da VM
+  ansible.builtin.command: >
+    az vm show
+    --subscription {{ _azure_subscription_id }}
+    --resource-group {{ _azure_resource_group }}
+    --name {{ _azure_vm_name }}
+    --query "storageProfile.osDisk.managedDisk.id"
+    -o tsv
+  register: osdisk_id
+  changed_when: false
+
+- name: Falhar se não encontrou o disco
+  ansible.builtin.assert:
+    that:
+      - osdisk_id.stdout is match("^/subscriptions/.+/resourceGroups/.+/providers/Microsoft\\.Compute/disks/.+")
+    fail_msg: "Não foi possível identificar o OS Disk da VM {{ _azure_vm_name }}."
+
+- name: Criar snapshot incremental do OS Disk
+  ansible.builtin.command: >
+    az snapshot create
+    --subscription {{ _azure_subscription_id }}
+    --resource-group {{ _azure_resource_group }}
+    --name {{ snapshot_name }}
+    --source {{ osdisk_id.stdout }}
+    --incremental true
+    --query "provisioningState"
+    -o tsv
+  register: snap_create
+  changed_when: "'Succeeded' in snap_create.stdout"
+
+- name: Aguardar provisionamento do snapshot = Succeeded
+  ansible.builtin.command: >
+    az snapshot show
+    --subscription {{ _azure_subscription_id }}
+    --resource-group {{ _azure_resource_group }}
+    --name {{ snapshot_name }}
+    --query "provisioningState"
+    -o tsv
+  register: snap_state
+  retries: 15
+  delay: 8
+  until: snap_state.stdout == "Succeeded"
+  changed_when: false
+
+- name: Exibir snapshot criado
+  ansible.builtin.debug:
+    msg:
+      - "Snapshot criado com sucesso: {{ snapshot_name }}"
+      - "State: {{ snap_state.stdout }}"
+      - "Disk:  {{ osdisk_id.stdout }}"
