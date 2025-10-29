@@ -1,0 +1,74 @@
+---
+- name: Pipeline: stop -> snapshot -> deploy
+  hosts: WEB
+  become: yes
+  vars:
+    service_name: nginx                  # <- serviço dinâmico
+    azure_subscription_id: "SUBSCRIPTION_ID"
+    azure_resource_group: "RG-NOME"
+    azure_vm_name: "vm-web-01"
+    snapshot_prefix: "snap-{{ azure_vm_name }}"
+    # opcional: onde salvar artefato/versão do deploy
+    app_artifact_url: "https://exemplo.com/minha-app.tar.gz"
+    app_dir: /opt/minha-app
+
+  pre_tasks:
+    - name: Garantir que o Azure CLI esteja disponível
+      ansible.builtin.command: az --version
+      register: azcli
+      changed_when: false
+
+    - name: Parar serviço {{ service_name }}
+      ansible.builtin.service:
+        name: "{{ service_name }}"
+        state: stopped
+
+    - name: Confirmar serviço parado (systemd)
+      ansible.builtin.command: "systemctl is-active {{ service_name }}"
+      register: svc_state
+      failed_when: svc_state.stdout != "inactive"
+      changed_when: false
+
+  tasks:
+    - name: Criar snapshot da VM no Azure (chamar outra playbook)
+      ansible.builtin.include_tasks: snapshot.yml
+      vars:
+        _snapshot_prefix: "{{ snapshot_prefix }}"
+        _azure_subscription_id: "{{ azure_subscription_id }}"
+        _azure_resource_group: "{{ azure_resource_group }}"
+        _azure_vm_name: "{{ azure_vm_name }}"
+
+    - name: Deploy | Preparar diretório
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Deploy | Baixar artefato
+      ansible.builtin.get_url:
+        url: "{{ app_artifact_url }}"
+        dest: "{{ app_dir }}/release.tar.gz"
+        mode: "0644"
+
+    - name: Deploy | Descompactar
+      ansible.builtin.unarchive:
+        src: "{{ app_dir }}/release.tar.gz"
+        dest: "{{ app_dir }}"
+        remote_src: true
+        extra_opts: [--strip-components=1]
+
+  post_tasks:
+    - name: Subir serviço {{ service_name }}
+      ansible.builtin.service:
+        name: "{{ service_name }}"
+        state: started
+
+    - name: Verificar serviço em execução
+      ansible.builtin.command: "systemctl is-active {{ service_name }}"
+      register: svc_state_after
+      failed_when: svc_state_after.stdout != "active"
+      changed_when: false
+
+  handlers: []
