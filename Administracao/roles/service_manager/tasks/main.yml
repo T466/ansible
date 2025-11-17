@@ -1,0 +1,50 @@
+---
+# Role: service_manager
+# Gerencia serviços em OL8, Ubuntu e SUSE de forma multiplataforma
+# Conferir Distro
+- name: Mostrar família de SO
+  ansible.builtin.debug:
+    msg: "Host={{ inventory_hostname }} ansible_os_family={{ ansible_os_family }}"
+
+# Zabbix - RedHat (Oracle Linux entra aqui)
+- name: Definir service_name para Zabbix em RedHat
+  ansible.builtin.set_fact:
+    service_name: zabbix-agent2
+  when:
+    - service_kind == 'zabbix'
+    - ansible_os_family == 'RedHat'
+
+# Zabbix - Debian (Ubuntu entra aqui)
+- name: Definir service_name para Zabbix em Debian
+  ansible.builtin.set_fact:
+    service_name: zabbix-agent
+  when:
+    - service_kind == 'zabbix'
+    - ansible_os_family == 'Debian'
+
+# Zabbix - Suse
+- name: Definir service_name para Zabbix em Suse
+  ansible.builtin.set_fact:
+    service_name: zabbix-agentd
+  when:
+    - service_kind == 'zabbix'
+    - ansible_os_family == 'Suse'
+
+# Nginx (igual pra todo mundo; se mudar em algum SO, cria um bloco por família)
+- name: Definir service_name para Nginx
+  ansible.builtin.set_fact:
+    service_name: nginx
+  when: service_kind == 'nginx'
+
+# Segurança: falhar se nada tiver definido service_name
+- name: Falhar se service_name não foi definido
+  ansible.builtin.fail:
+    msg: "service_name não definido para service_kind={{ service_kind }} em ansible_os_family={{ ansible_os_family }}"
+  when: service_name is not defined
+
+# Gerenciar serviço - ação final
+- name: Gerenciar serviços
+  ansible.builtin.service:
+    name: "{{ service_name }}"
+    state: "{{ service_action }}"
+  become: true
