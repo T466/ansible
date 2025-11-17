@@ -1,0 +1,7 @@
+---
+- name: Gerenciar serviços em múltiplas distros
+  hosts: all
+  become: true
+
+  roles:
+    - service_manager
