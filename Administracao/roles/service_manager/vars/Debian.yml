@@ -1,0 +1,3 @@
+---
+zabbix_service_name: zabbix-agent
+nginx_service_name: nginx
