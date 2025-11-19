@@ -1,0 +1,86 @@
+---
+- name: Atualizar Grafana Enterprise
+  hosts: 192.168.15.28
+  become: true
+  gather_facts: false
+
+  vars:
+    grafana_rpm_url: "https://dl.grafana.com/enterprise/release/grafana-enterprise-11.6.0-1.x86_64.rpm"
+    grafana_backup_dir: "/opt/backup_grafana_11.5.10"
+    grafana_conf_dir: "/etc/grafana"
+    grafana_data_dir: "/var/lib/grafana"
+    grafana_service_name: "grafana-server"
+
+  tasks:
+
+    - name: Garantir diretório de backup existe
+      ansible.builtin.file:
+        path: "{{ grafana_backup_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Backup do diretório de configuração
+      ansible.builtin.command:
+        cmd: "cp -a {{ grafana_conf_dir }} {{ grafana_backup_dir }}/"
+      args:
+        creates: "{{ grafana_backup_dir }}/grafana"
+      register: backup_conf
+      changed_when: backup_conf.rc == 0
+
+    - name: Backup do diretório de dados (apenas estrutura básica)
+      ansible.builtin.command:
+        cmd: "cp -a {{ grafana_data_dir }}/grafana.db {{ grafana_backup_dir }}/"
+      register: backup_db
+      failed_when: backup_db.rc not in [0,1]
+      changed_when: backup_db.rc == 0
+
+    - name: Verificar versão atual do Grafana (se instalado)
+      ansible.builtin.command: "grafana-cli -v"
+      register: grafana_version_cmd
+      failed_when: false
+      changed_when: false
+
+    - name: Exibir versão atual (se encontrada)
+      ansible.builtin.debug:
+        msg: "Versão atual do Grafana: {{ grafana_version_cmd.stdout | default('não encontrado') }}"
+
+    # Opcional: falhar se não estiver na 11.5.10
+    - name: Validar que estamos na série 11.5.x antes do upgrade (opcional)
+      ansible.builtin.assert:
+        that:
+          - "'11.5.' in grafana_version_cmd.stdout"
+        fail_msg: "Grafana não está na versão 11.5.x. Verifique antes de atualizar."
+      when: grafana_version_cmd.rc == 0
+
+    - name: Parar serviço do Grafana antes da atualização
+      ansible.builtin.service:
+        name: "{{ grafana_service_name }}"
+        state: stopped
+      ignore_errors: true
+
+    - name: Atualizar Grafana usando yum com o RPM remoto
+      ansible.builtin.command: >
+        yum install -y {{ grafana_rpm_url }}
+      register: yum_install
+      changed_when: "'Complete!' in yum_install.stdout or yum_install.rc == 0"
+
+    - name: Exibir saída da instalação
+      ansible.builtin.debug:
+        var: yum_install.stdout_lines
+
+    - name: Iniciar e habilitar serviço do Grafana
+      ansible.builtin.service:
+        name: "{{ grafana_service_name }}"
+        state: started
+        enabled: true
+
+    - name: Verificar versão do Grafana após atualização
+      ansible.builtin.command: "grafana-cli -v"
+      register: grafana_version_after
+      changed_when: false
+
+    - name: Exibir versão após upgrade
+      ansible.builtin.debug:
+        msg: "Versão do Grafana após upgrade: {{ grafana_version_after.stdout }}"
