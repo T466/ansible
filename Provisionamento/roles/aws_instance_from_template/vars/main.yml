@@ -1,0 +1,16 @@
+# roles/aws_instance_from_template/vars/main.yml
+---
+
+aws_launch_templates:
+  Sap:
+    name: "Sap"
+    version: "$Latest"
+  DB-Oracle:
+    name: "DB-Oracle"
+    version: "$Latest"
+  Kafka-cluster:
+    name: "Kafka-cluster"
+    version: "$Latest"
+  Kafka-pacemaker:
+    name: "Kafka-pacemaker"
+    version: "$Latest"
