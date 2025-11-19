@@ -1,0 +1,36 @@
+# roles/aws_instance_from_template/tasks/main.yml
+---
+
+- name: "Garantir que template {{ aws_template_name }} existe no mapa"
+  ansible.builtin.assert:
+    that:
+      - aws_template_name in aws_launch_templates
+    fail_msg: "Template '{{ aws_template_name }}' não está definido em aws_launch_templates (vars/main.yml)."
+    success_msg: "Template '{{ aws_template_name }}' encontrado em aws_launch_templates."
+
+- name: "Definir dados do Launch Template selecionado"
+  ansible.builtin.set_fact:
+    _selected_lt: "{{ aws_launch_templates[aws_template_name] }}"
+
+- name: "Criar instância(s) na AWS a partir do Launch Template {{ aws_template_name }}"
+  amazon.aws.ec2_instance:
+    name: "{{ aws_template_name }}-{{ '%Y%m%d%H%M%S' | strftime }}"
+    region: "{{ aws_region }}"
+    count: "{{ aws_instance_count }}"
+    wait: true
+    # Se quiser forçar tipo de instância (se o LT não definir ou permitir override):
+    instance_type: "{{ aws_instance_type | default(omit) }}"
+    # Lê o Launch Template configurado no vars/main.yml
+    launch_template:
+      name: "{{ _selected_lt.name }}"
+      version: "{{ _selected_lt.version }}"
+    # Se o Launch Template deixar esses campos em branco ou permitir override,
+    # você pode informar aqui:
+    subnet_id: "{{ aws_subnet_id | default(omit) }}"
+    security_group_ids: "{{ aws_security_group_ids | default(omit) }}"
+    tags: "{{ aws_instance_tags }}"
+  register: created_instances
+
+- name: "Exibir informações das instâncias criadas"
+  ansible.builtin.debug:
+    var: created_instances.instances
