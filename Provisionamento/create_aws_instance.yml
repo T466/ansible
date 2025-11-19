@@ -1,0 +1,29 @@
+# create_aws_instance.yml
+---
+
+- name: "Criar instância na AWS a partir de um Launch Template"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Escolha um dos: Sap, DB-Oracle, Kafka-cluster, Kafka-pacemaker
+    aws_template_name: "Kafka-cluster"
+
+    aws_region: "us-east-1"
+    aws_instance_count: 1
+    aws_instance_type: "t3.large"
+
+    # Exemplo de override de rede/SG
+    aws_subnet_id: "subnet-0abc123456789def0"
+    aws_security_group_ids:
+      - "sg-0123456789abcdef0"
+
+    aws_instance_tags:
+      Project: "Kafka-POC"
+      Environment: "dev"
+      ManagedBy: "Ansible"
+      Role: "{{ aws_template_name }}"
+
+  roles:
+    - aws_instance_from_template
