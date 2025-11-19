@@ -7,7 +7,7 @@
   gather_facts: false
 
   vars:
-    # Escolha um dos: Sap, DB-Oracle, Kafka-cluster, Kafka-pacemaker
+    # Escolha um dos: Sap, DB-Oracle, Kafka-cluster, Pacemaker
     aws_template_name: "Kafka-cluster"
 
     aws_region: "us-east-1"
