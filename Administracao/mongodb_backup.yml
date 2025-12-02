@@ -1,0 +1,15 @@
+---
+- hosts: mongodb_servers
+  become: yes
+  roles:
+    - role: mongodb_backup
+      vars:
+        backup_base_dir: "/srv/backups/mongodb"
+        mongodb_backup_user: "backup"
+        mongodb_auth_enabled: true
+        mongodb_username: "backupuser"
+        mongodb_password: "S3nh@Sup3rS3creta"
+        mongodb_auth_db: "admin"
+        mongodb_enable_oplog: true
+        mongodb_backup_hour: "3"
+        mongodb_backup_keep_days: 14
