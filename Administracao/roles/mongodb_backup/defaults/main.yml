@@ -1,0 +1,35 @@
+---
+# Diretório base onde ficarão os backups
+backup_base_dir: "/var/backups/mongodb"
+
+# Usuário que vai executar o backup (cron)
+mongodb_backup_user: "root"
+
+# Conexão com o MongoDB
+mongodb_host: "127.0.0.1"
+mongodb_port: 27017
+
+# Autenticação (opcional)
+mongodb_auth_enabled: false
+mongodb_username: ""
+mongodb_password: ""
+mongodb_auth_db: "admin"
+
+# Caminho do mongodump (se estiver no PATH, deixe apenas 'mongodump')
+mongodb_mongodump_path: "mongodump"
+
+# Argumentos extras (caso queira passar algo customizado)
+mongodb_extra_args: ""
+
+# Usar ou não --oplog (útil em replica sets)
+mongodb_enable_oplog: false
+
+# Agendamento do cron
+mongodb_backup_minute: "0"
+mongodb_backup_hour: "2"
+
+# Retenção em dias
+mongodb_backup_keep_days: 7
+
+# Usar gzip (mongodump --archive + --gzip)
+mongodb_enable_gzip: true
