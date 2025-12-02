@@ -1,0 +1,60 @@
+#!/bin/bash
+set -euo pipefail
+
+DATE=$(date +"%Y-%m-%d_%H-%M-%S")
+BACKUP_BASE="{{ backup_base_dir }}"
+BACKUP_NAME="mongo-backup-${DATE}"
+
+mkdir -p "${BACKUP_BASE}"
+
+MONGODUMP="{{ mongodb_mongodump_path }}"
+
+MONGODUMP_CMD=( "${MONGODUMP}" "--host" "{{ mongodb_host }}" "--port" "{{ mongodb_port }}" )
+
+{% if mongodb_auth_enabled %}
+MONGODUMP_CMD+=( "--username" "{{ mongodb_username }}" "--password" "{{ mongodb_password }}" "--authenticationDatabase" "{{ mongodb_auth_db }}" )
+{% endif %}
+
+{% if mongodb_enable_oplog %}
+MONGODUMP_CMD+=( "--oplog" )
+{% endif %}
+
+{% if mongodb_extra_args %}
+MONGODUMP_CMD+=( {{ mongodb_extra_args }} )
+{% endif %}
+
+{% if mongodb_enable_gzip %}
+# Usando archive + gzip em um único arquivo
+ARCHIVE_FILE="${BACKUP_BASE}/${BACKUP_NAME}.gz"
+MONGODUMP_CMD+=( "--archive=${ARCHIVE_FILE}" "--gzip" )
+{% else %}
+# Dump em diretório
+OUT_DIR="${BACKUP_BASE}/${BACKUP_NAME}"
+MONGODUMP_CMD+=( "--out=${OUT_DIR}" )
+{% endif %}
+
+echo "[INFO] Iniciando backup MongoDB em $(date)"
+echo "[INFO] Comando: ${MONGODUMP_CMD[@]}"
+
+"${MONGODUMP_CMD[@]}"
+
+echo "[INFO] Backup concluído em $(date)"
+
+# Limpeza de backups antigos
+echo "[INFO] Removendo backups mais antigos que {{ mongodb_backup_keep_days }} dias..."
+
+find "${BACKUP_BASE}" \
+  -maxdepth 1 \
+  -type f \
+  -name "mongo-backup-*.gz" \
+  -mtime +{{ mongodb_backup_keep_days }} \
+  -print -delete || true
+
+find "${BACKUP_BASE}" \
+  -maxdepth 1 \
+  -type d \
+  -name "mongo-backup-*" \
+  -mtime +{{ mongodb_backup_keep_days }} \
+  -print -exec rm -rf {} \; || true
+
+echo "[INFO] Limpeza concluída."
