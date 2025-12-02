@@ -1,0 +1,25 @@
+---
+- name: Criar diretório base de backup do MongoDB
+  file:
+    path: "{{ backup_base_dir }}"
+    state: directory
+    owner: "{{ mongodb_backup_user }}"
+    group: "{{ mongodb_backup_user }}"
+    mode: "0755"
+
+- name: Instalar script de backup do MongoDB
+  template:
+    src: "backup-mongo.sh.j2"
+    dest: "/usr/local/bin/mongodb-backup.sh"
+    owner: "{{ mongodb_backup_user }}"
+    group: "{{ mongodb_backup_user }}"
+    mode: "0755"
+
+- name: Configurar cron para backup diário do MongoDB
+  cron:
+    name: "Backup diário do MongoDB"
+    user: "{{ mongodb_backup_user }}"
+    job: "/usr/local/bin/mongodb-backup.sh"
+    minute: "{{ mongodb_backup_minute }}"
+    hour: "{{ mongodb_backup_hour }}"
+    state: present
