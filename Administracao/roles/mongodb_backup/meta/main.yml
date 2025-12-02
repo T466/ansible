@@ -1,0 +1,31 @@
+---
+galaxy_info:
+  role_name: mongodb_backup
+  author: "Thiago Freitas"
+  description: "Role Ansible para backup automatizado do MongoDB usando mongodump e cron."
+  license: "MIT"
+  min_ansible_version: "2.9"
+
+  platforms:
+    - name: EL
+      versions:
+        - "8"
+        - "9"
+    - name: Debian
+      versions:
+        - "11"
+        - "12"
+    - name: Ubuntu
+      versions:
+        - "20.04"
+        - "22.04"
+
+  galaxy_tags:
+    - mongodb
+    - backup
+    - database
+    - nosql
+    - devops
+    - automation
+
+dependencies: []
