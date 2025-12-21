@@ -1,0 +1,29 @@
+- name: Controlar serviços (Kafka / Zookeeper)
+  hosts: all
+  become: true
+  gather_facts: false
+
+  pre_tasks:
+    - name: Validar variáveis do survey
+      ansible.builtin.assert:
+        that:
+          - service_action in ['status','start','stop','restart']
+          - service_target in ['kafka','zookeeper','both']
+        fail_msg: "Survey inválido: service_action={{ service_action }}, service_target={{ service_target }}"
+
+    - name: Mapear action -> state do systemd
+      ansible.builtin.set_fact:
+        service_state: >-
+          {{
+            'started' if service_action == 'start' else
+            'stopped' if service_action == 'stop' else
+            'restarted' if service_action == 'restart' else
+            omit
+          }}
+
+  roles:
+    - role: kafka_service
+      when: service_target in ['kafka', 'both']
+
+    - role: zookeeper_service
+      when: service_target in ['zookeeper', 'both']
