@@ -1,1 +1,13 @@
+version: 1
+
+build_arg_defaults:
+  EE_BASE_IMAGE: quay.io/redhat/ansible-runner:stable-2.12-latest
+
+dependencies:
+  galaxy: requirements.yml
+  python: requirements.txt
+
+additional_build_steps:
+  prepend:
+    - RUN microdnf install -y gcc python3-devel
 
