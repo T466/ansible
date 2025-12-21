@@ -1,24 +1,3 @@
 ---
-- name: Criar snapshots de VMs no VMware
-  hosts: localhost
-  gather_facts: no
-  vars_files:
-    - vars/vmware_vars.yml
-
-  tasks:
-    - name: Snapshot das VMs do grupo snapshots
-      vmware.vmware.vm_snapshot:
-        hostname: "{{ vcenter_hostname }}"
-        username: "{{ vcenter_username }}"
-        password: "{{ vcenter_password }}"
-        validate_certs: "{{ validate_certs }}"
-        datacenter: "{{ vcenter_datacenter }}"
-        folder: "{{ vcenter_folder | default(omit) }}"
-        name: "{{ hostvars[item].vm_name }}"
-        state: present
-        snapshot_name: "{{ snapshot_name }}"
-        description: "Snapshot criado por AAP/Ansible"
-        quiesce: true
-        memory_dump: false
-      loop: "{{ groups['snapshots'] }}"
-      delegate_to: localhost
+hosts: localhost
+delegate_to: localhost
