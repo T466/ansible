@@ -1,5 +1,5 @@
 ---
-# 1) Validação (roda uma vez)
+# 1) Validação (uma vez)
 - name: Validar survey (run_once)
   hosts: all
   gather_facts: false
@@ -7,8 +7,8 @@
     - name: Validar variáveis do survey
       ansible.builtin.assert:
         that:
-          - service_action in ['status', 'start', 'stop', 'restart']
-          - service_target in ['kafka', 'zookeeper', 'both']
+          - service_action in ['status','start','stop','restart']
+          - service_target in ['kafka','zookeeper','both']
         fail_msg: "Survey inválido: service_action={{ service_action }}, service_target={{ service_target }}"
       run_once: true
 
@@ -17,71 +17,41 @@
   hosts: zookeeper_nodes
   become: true
   gather_facts: false
-  tasks:
-    - name: Executar ação no Zookeeper (start/restart)
-      ansible.builtin.systemd:
-        name: zookeeper
-        state: "{{ 'started' if service_action == 'start' else 'restarted' }}"
+  roles:
+    - role: zookeeper_service
       when:
-        - service_action in ['start','restart']
         - service_target in ['zookeeper','both']
+        - service_action in ['start','restart','status']
 
 # 3) START/RESTART -> Kafka depois
 - name: Kafka depois (start/restart)
   hosts: kafka_brokers
   become: true
   gather_facts: false
-  tasks:
-    - name: Executar ação no Kafka (start/restart)
-      ansible.builtin.systemd:
-        name: kafka
-        state: "{{ 'started' if service_action == 'start' else 'restarted' }}"
+  roles:
+    - role: kafka_service
       when:
-        - service_action in ['start','restart']
         - service_target in ['kafka','both']
+        - service_action in ['start','restart','status']
 
 # 4) STOP -> Kafka primeiro
 - name: Kafka primeiro (stop)
   hosts: kafka_brokers
   become: true
   gather_facts: false
-  tasks:
-    - name: Parar Kafka
-      ansible.builtin.systemd:
-        name: kafka
-        state: stopped
+  roles:
+    - role: kafka_service
       when:
-        - service_action == 'stop'
         - service_target in ['kafka','both']
+        - service_action == 'stop'
 
 # 5) STOP -> Zookeeper por último
 - name: Zookeeper por último (stop)
   hosts: zookeeper_nodes
   become: true
   gather_facts: false
-  tasks:
-    - name: Parar Zookeeper
-      ansible.builtin.systemd:
-        name: zookeeper
-        state: stopped
+  roles:
+    - role: zookeeper_service
       when:
-        - service_action == 'stop'
         - service_target in ['zookeeper','both']
-
-# 6) STATUS -> consulta (sem ordem)
-- name: Status (consulta)
-  hosts: kafka_brokers:zookeeper_nodes
-  become: true
-  gather_facts: false
-  tasks:
-    - name: Consultar status
-      ansible.builtin.systemd:
-        name: "{{ 'kafka' if inventory_hostname in groups['kafka_brokers'] else 'zookeeper' }}"
-      register: svc_status
-      when: service_action == 'status'
-
-    - name: Exibir status
-      ansible.builtin.debug:
-        msg: "{{ inventory_hostname }} | {{ svc_status.name }} | active={{ svc_status.status.ActiveState | default('n/a') }} | sub={{ svc_status.status.SubState | default('n/a') }}"
-      when: service_action == 'status'
-
+        - service_action == 'stop'
