@@ -1,58 +1,63 @@
-- name: Controlar serviços Kafka e Zookeeper
-  hosts: kafka_brokers:zookeeper_nodes   # ⬅️ evite 'all'
-  become: true
+---
+# 1️⃣ Validação (1 vez só)
+- name: Validar survey
+  hosts: localhost
   gather_facts: false
-
-  vars:
-    kafka_service_name: kafka
-    zookeeper_service_name: zookeeper
-
-  pre_tasks:
-    - name: Validar variáveis do survey
-      ansible.builtin.assert:
+  tasks:
+    - ansible.builtin.assert:
         that:
           - service_action in ['status','start','stop','restart']
           - service_target in ['kafka','zookeeper','both']
-        fail_msg: "Survey inválido"
+      run_once: true
 
-    - name: Mapear action -> state do systemd
-      ansible.builtin.set_fact:
-        systemd_state: "{{ {'start':'started','stop':'stopped','restart':'restarted'}[service_action] }}"
-      when: service_action in ['start','stop','restart']
+# 2️⃣ Zookeeper PRIMEIRO (start / restart)
+- name: Zookeeper primeiro
+  hosts: zookeeper_nodes
+  become: true
+  gather_facts: false
+  vars:
+    zk_state: "{{ 'started' if service_action == 'start' else 'restarted' }}"
+  roles:
+    - role: zookeeper_service
+  when:
+    - service_target in ['zookeeper','both']
+    - service_action in ['start','restart']
 
-  tasks:
-    # ✅ É AQUI QUE ENTRA O BLOCO 👇
-    - name: Definir lista de serviços a operar (com ordem)
-      ansible.builtin.set_fact:
-        svc_list: >-
-          {{
-            (service_target == 'both') | ternary(
-              (
-                (service_action in ['start','restart'])
-                | ternary([zookeeper_service_name, kafka_service_name],
-                          [kafka_service_name, zookeeper_service_name])
-              ),
-              [ (service_target == 'kafka') | ternary(kafka_service_name, zookeeper_service_name) ]
-            )
-          }}
+# 3️⃣ Kafka DEPOIS (start / restart)
+- name: Kafka depois
+  hosts: kafka_brokers
+  become: true
+  gather_facts: false
+  vars:
+    kafka_state: "{{ 'started' if service_action == 'start' else 'restarted' }}"
+  roles:
+    - role: kafka_service
+  when:
+    - service_target in ['kafka','both']
+    - service_action in ['start','restart']
 
-    - name: Executar ação nos serviços selecionados
-      ansible.builtin.systemd:
-        name: "{{ item }}"
-        state: "{{ systemd_state }}"
-      loop: "{{ svc_list }}"
-      when: service_action in ['start','stop','restart']
+# 4️⃣ Kafka PRIMEIRO (stop)
+- name: Kafka primeiro (stop)
+  hosts: kafka_brokers
+  become: true
+  gather_facts: false
+  vars:
+    kafka_state: stopped
+  roles:
+    - role: kafka_service
+  when:
+    - service_target in ['kafka','both']
+    - service_action == 'stop'
 
-    - name: Coletar status dos serviços selecionados
-      ansible.builtin.systemd:
-        name: "{{ item }}"
-      register: svc_status
-      loop: "{{ svc_list }}"
-
-    - name: Exibir status consolidado
-      ansible.builtin.debug:
-        msg: >-
-          {{ inventory_hostname }} | {{ item.name }}
-          | active={{ item.status.ActiveState | default('n/a') }}
-          | sub={{ item.status.SubState | default('n/a') }}
-      loop: "{{ svc_status.results }}"
+# 5️⃣ Zookeeper POR ÚLTIMO (stop)
+- name: Zookeeper por último (stop)
+  hosts: zookeeper_nodes
+  become: true
+  gather_facts: false
+  vars:
+    zk_state: stopped
+  roles:
+    - role: zookeeper_service
+  when:
+    - service_target in ['zookeeper','both']
+    - service_action == 'stop'
