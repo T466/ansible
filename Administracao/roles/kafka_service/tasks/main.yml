@@ -1,18 +1,14 @@
-
-- name: Kafka | Aplicar ação (start/stop/restart)
+- name: Kafka | Executar ação
   ansible.builtin.systemd:
-    name: "{{ kafka_service_name }}"
-    state: "{{ service_state }}"
-  when: service_action in ['start', 'stop', 'restart']
+    name: kafka
+    state: "{{ kafka_state }}"
+  when: service_action in ['start','stop','restart']
 
-- name: Kafka | Coletar status
+- name: Kafka | Status
   ansible.builtin.systemd:
-    name: "{{ kafka_service_name }}"
-  register: kafka_status
+    name: kafka
+  register: k_status
 
-- name: Kafka | Exibir status consolidado
+- name: Kafka | Exibir status
   ansible.builtin.debug:
-    msg: >-
-      {{ inventory_hostname }} | {{ kafka_service_name }}
-      | active={{ kafka_status.status.ActiveState | default('n/a') }}
-      | sub={{ kafka_status.status.SubState | default('n/a') }}
+    msg: "{{ inventory_hostname }} | kafka | active={{ k_status.status.ActiveState | default('n/a') }}"
