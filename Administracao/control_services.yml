@@ -1,5 +1,5 @@
 - name: Controlar serviços Kafka e Zookeeper
-  hosts: all
+  hosts: kafka_brokers:zookeeper_nodes   # ⬅️ evite 'all'
   become: true
   gather_facts: false
 
@@ -17,15 +17,11 @@
 
     - name: Mapear action -> state do systemd
       ansible.builtin.set_fact:
-        service_state: >-
-          {{
-            'started' if service_action == 'start' else
-            'stopped' if service_action == 'stop' else
-            'restarted' if service_action == 'restart' else
-            omit
-          }}
+        systemd_state: "{{ {'start':'started','stop':'stopped','restart':'restarted'}[service_action] }}"
+      when: service_action in ['start','stop','restart']
 
   tasks:
+    # ✅ É AQUI QUE ENTRA O BLOCO 👇
     - name: Definir lista de serviços a operar (com ordem)
       ansible.builtin.set_fact:
         svc_list: >-
@@ -40,14 +36,14 @@
             )
           }}
 
-    - name: Rodar ação nos serviços selecionados
+    - name: Executar ação nos serviços selecionados
       ansible.builtin.systemd:
         name: "{{ item }}"
-        state: "{{ service_state }}"
+        state: "{{ systemd_state }}"
       loop: "{{ svc_list }}"
       when: service_action in ['start','stop','restart']
 
-    - name: Coletar status dos serviços
+    - name: Coletar status dos serviços selecionados
       ansible.builtin.systemd:
         name: "{{ item }}"
       register: svc_status
