@@ -26,7 +26,6 @@
           }}
 
   tasks:
-    # 👇 É EXATAMENTE AQUI 👇
     - name: Definir lista de serviços a operar (com ordem)
       ansible.builtin.set_fact:
         svc_list: >-
