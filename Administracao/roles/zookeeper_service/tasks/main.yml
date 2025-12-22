@@ -1,3 +1,8 @@
+- name: Zookeeper | Mapear action -> state
+  ansible.builtin.set_fact:
+    zk_state: "{{ 'started' if service_action == 'start' else 'stopped' if service_action == 'stop' else 'restarted' }}"
+  when: service_action in ['start','stop','restart']
+
 - name: Zookeeper | Executar ação
   ansible.builtin.systemd:
     name: zookeeper
@@ -7,8 +12,10 @@
 - name: Zookeeper | Status
   ansible.builtin.systemd:
     name: zookeeper
+    state: started
   register: zk_status
+  changed_when: false
 
 - name: Zookeeper | Exibir status
   ansible.builtin.debug:
-    msg: "{{ inventory_hostname }} | zookeeper | active={{ zk_status.status.ActiveState | default('n/a') }}"
+    msg: "{{ inventory_hostname }} | zookeeper | active={{ zk_status.status.ActiveState | default('n/a') }} | sub={{ zk_status.status.SubState | default('n/a') }}"
