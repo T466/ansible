@@ -1,18 +1,14 @@
-
-- name: Zookeeper | Aplicar ação (start/stop/restart)
+- name: Zookeeper | Executar ação
   ansible.builtin.systemd:
-    name: "{{ zookeeper_service_name }}"
-    state: "{{ service_state }}"
-  when: service_action in ['start', 'stop', 'restart']
+    name: zookeeper
+    state: "{{ zk_state }}"
+  when: service_action in ['start','stop','restart']
 
-- name: Zookeeper | Coletar status
+- name: Zookeeper | Status
   ansible.builtin.systemd:
-    name: "{{ zookeeper_service_name }}"
+    name: zookeeper
   register: zk_status
 
-- name: Zookeeper | Exibir status consolidado
+- name: Zookeeper | Exibir status
   ansible.builtin.debug:
-    msg: >-
-      {{ inventory_hostname }} | {{ zookeeper_service_name }}
-      | active={{ zk_status.status.ActiveState | default('n/a') }}
-      | sub={{ zk_status.status.SubState | default('n/a') }}
+    msg: "{{ inventory_hostname }} | zookeeper | active={{ zk_status.status.ActiveState | default('n/a') }}"
