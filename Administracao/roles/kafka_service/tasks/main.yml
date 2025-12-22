@@ -1,19 +1,19 @@
----
-- name: Mapear action -> state (kafka)
+- name: Kafka | Mapear action -> state
   ansible.builtin.set_fact:
-    kafka_state: "{{ {'start':'started','stop':'stopped','restart':'restarted'}[service_action] | default(omit) }}"
+    kafka_state: "{{ {'start':'started','stop':'stopped','restart':'restarted'}[service_action] }}"
+  when: service_action in ['start','stop','restart']
 
-- name: Executar ação no Kafka (start/stop/restart)
+- name: Kafka | Executar ação
   ansible.builtin.systemd:
     name: kafka
     state: "{{ kafka_state }}"
   when: service_action in ['start','stop','restart']
 
-- name: Consultar status Kafka
+- name: Kafka | Status
   ansible.builtin.systemd:
     name: kafka
   register: kafka_status
 
-- name: Exibir status Kafka
+- name: Kafka | Exibir status
   ansible.builtin.debug:
     msg: "{{ inventory_hostname }} | kafka | active={{ kafka_status.status.ActiveState | default('n/a') }} | sub={{ kafka_status.status.SubState | default('n/a') }}"
