@@ -1,7 +1,11 @@
-- name: Controlar serviços (Kafka / Zookeeper)
+- name: Controlar serviços Kafka e Zookeeper
   hosts: all
   become: true
   gather_facts: false
+
+  vars:
+    kafka_service_name: kafka
+    zookeeper_service_name: zookeeper
 
   pre_tasks:
     - name: Validar variáveis do survey
@@ -9,7 +13,7 @@
         that:
           - service_action in ['status','start','stop','restart']
           - service_target in ['kafka','zookeeper','both']
-        fail_msg: "Survey inválido: service_action={{ service_action }}, service_target={{ service_target }}"
+        fail_msg: "Survey inválido"
 
     - name: Mapear action -> state do systemd
       ansible.builtin.set_fact:
@@ -21,9 +25,39 @@
             omit
           }}
 
-  roles:
-    - role: kafka_service
-      when: service_target in ['kafka', 'both']
+  tasks:
+    # 👇 É EXATAMENTE AQUI 👇
+    - name: Definir lista de serviços a operar (com ordem)
+      ansible.builtin.set_fact:
+        svc_list: >-
+          {{
+            (service_target == 'both') | ternary(
+              (
+                (service_action in ['start','restart'])
+                | ternary([zookeeper_service_name, kafka_service_name],
+                          [kafka_service_name, zookeeper_service_name])
+              ),
+              [ (service_target == 'kafka') | ternary(kafka_service_name, zookeeper_service_name) ]
+            )
+          }}
 
-    - role: zookeeper_service
-      when: service_target in ['zookeeper', 'both']
+    - name: Rodar ação nos serviços selecionados
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: "{{ service_state }}"
+      loop: "{{ svc_list }}"
+      when: service_action in ['start','stop','restart']
+
+    - name: Coletar status dos serviços
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      register: svc_status
+      loop: "{{ svc_list }}"
+
+    - name: Exibir status consolidado
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} | {{ item.name }}
+          | active={{ item.status.ActiveState | default('n/a') }}
+          | sub={{ item.status.SubState | default('n/a') }}
+      loop: "{{ svc_status.results }}"
