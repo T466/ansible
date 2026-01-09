@@ -1,3 +1,0 @@
----
-- name: "Inclui tarefas específicas por família de SO"
-  include_tasks: "{{ ansible_os_family | lower }}.yml"
