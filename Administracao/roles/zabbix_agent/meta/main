@@ -1,0 +1,14 @@
+---
+galaxy_info:
+  author: "Thiago"
+  description: "Instalação do Zabbix Agent em OL8, Ubuntu 22 e SUSE 15"
+  license: "MIT"
+  min_ansible_version: "2.9"
+  platforms:
+    - name: EL
+      versions: [8]
+    - name: Ubuntu
+      versions: [22.04]
+    - name: SLES
+      versions: [15]
+dependencies: []
