@@ -1,5 +1,5 @@
 ---
-- name: Instalar Zabbix Agent em OL8, Ubuntu 22 e SUSE 15
+- name: Instalar Zabbix Agent em RHEL8, RHEL9, OL8, Ubuntu 22 e SUSE 15
   hosts: all
   become: yes
 
