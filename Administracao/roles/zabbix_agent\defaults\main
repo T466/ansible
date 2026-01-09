@@ -1,0 +1,13 @@
+---
+# Pacotes
+zabbix_agent_pkg_redhat: "zabbix-agent"
+zabbix_agent_pkg_debian: "zabbix-agent"
+zabbix_agent_pkg_suse:   "zabbix-agent"
+
+# Serviço
+zabbix_agent_service_name: "zabbix-agent"
+
+# Configurações básicas
+zabbix_agent_server: "127.0.0.1"
+zabbix_agent_server_active: "{{ zabbix_agent_server }}"
+zabbix_agent_listen_port: 10050
