@@ -1,0 +1,18 @@
+---
+- name: "Verificar se o Zabbix Agent já está instalado no SUSE"
+  ansible.builtin.shell: "rpm -q {{ zabbix_agent_pkg_suse }}"
+  register: zabbix_agent_installed_suse
+  failed_when: false
+  changed_when: false
+
+- name: "Instalar Zabbix Agent no SUSE / openSUSE"
+  ansible.builtin.shell: "zypper -n in {{ zabbix_agent_pkg_suse }}"
+  when: zabbix_agent_installed_suse.rc != 0
+  become: yes
+
+- name: "Habilitar e iniciar Zabbix Agent no Suse-like"
+  ansible.builtin.service:
+    name: "{{ zabbix_agent_service_name }}"
+    state: started
+    enabled: yes
+  become: yes
