@@ -1,0 +1,35 @@
+---
+- name: Instalar Zabbix Agent2 via RPM direto no Oracle Linux 8
+  ansible.builtin.shell: |
+    rpm -Uvh --force \
+      https://repo.zabbix.com/zabbix/7.0/oracle/8/x86_64/zabbix-agent2-7.0.10-release1.el8.x86_64.rpm
+  args:
+    executable: /bin/bash
+    creates: /usr/sbin/zabbix_agent2
+  when: ansible_distribution == "OracleLinux"
+  register: ol8_rpm_install
+  changed_when: ol8_rpm_install.rc == 0
+  failed_when: ol8_rpm_install.rc != 0
+
+- name: Habilitar e iniciar Zabbix Agent2 no Oracle Linux 8
+  ansible.builtin.service:
+    name: zabbix-agent2
+    enabled: true
+    state: started
+  when: ansible_distribution == "OracleLinux"
+  ignore_errors: true
+
+- name: "Instalar Zabbix Agent em outros sistemas RedHat-like"
+  ansible.builtin.yum:
+    name: "{{ zabbix_agent_pkg_redhat }}"
+    state: present
+  become: ye
+  when: ansible_distribution != "OracleLinux"
+
+- name: "Habilitar e iniciar Zabbix Agent no RedHat-like (não Oracle)"
+  ansible.builtin.service:
+    name: "{{ zabbix_agent_service_name }}"
+    state: started
+    enabled: yes
+  become: yes
+  when: ansible_distribution != "OracleLinux"
