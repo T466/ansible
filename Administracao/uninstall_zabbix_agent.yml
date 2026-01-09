@@ -1,0 +1,136 @@
+---
+- name: Remover completamente o Zabbix Agent (OL8, Ubuntu 22, SUSE 15)
+  hosts: all
+  become: true
+
+  vars:
+    zabbix_paths:
+      - /etc/zabbix
+      - /var/log/zabbix
+      - /var/lib/zabbix
+
+  tasks:
+    # ---------- VALIDAÇÃO ----------
+    - name: Validar sistemas suportados (OL8, Ubuntu 22, SUSE 15)
+      ansible.builtin.assert:
+        that:
+          - >
+            (ansible_distribution == "OracleLinux"
+             and ansible_distribution_major_version == "8")
+            or
+            (ansible_distribution == "Ubuntu"
+             and ansible_distribution_version is search("^22\\."))
+            or
+            (ansible_os_family == "Suse"
+             and ansible_distribution_major_version == "15")
+        fail_msg: "Playbook suportado apenas em Oracle Linux 8, Ubuntu 22 e SUSE 15."
+        success_msg: "Sistema validado: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+      changed_when: false
+
+    # ---------- PARAR SERVIÇOS (SEM FICAR VERMELHO) ----------
+    - name: Parar serviço zabbix-agent (se existir)
+      ansible.builtin.service:
+        name: zabbix-agent
+        state: stopped
+      failed_when: false
+
+    - name: Parar serviço zabbix-agentd (se existir - SUSE/legado)
+      ansible.builtin.service:
+        name: zabbix-agentd
+        state: stopped
+      failed_when: false
+
+    # ---------- REMOÇÃO DE PACOTES ----------
+
+    # Oracle Linux 8
+    - name: Remover pacotes Zabbix no Oracle Linux 8
+      ansible.builtin.yum:
+        name:
+          - zabbix-agent
+          - zabbix-agent2
+        state: absent
+      when: ansible_distribution == "OracleLinux"
+      failed_when: false
+
+    - name: Remover arquivo de repositório Zabbix no OL8
+      ansible.builtin.file:
+        path: /etc/yum.repos.d/zabbix.repo
+        state: absent
+      when: ansible_distribution == "OracleLinux"
+      failed_when: false
+
+    # Ubuntu 22.04 – antes de remover, garantir /var/log/zabbix existe
+    - name: Garantir /var/log/zabbix existe no Ubuntu (para dpkg não reclamar)
+      ansible.builtin.file:
+        path: /var/log/zabbix
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      when: ansible_distribution == "Ubuntu"
+      failed_when: false
+
+    - name: Remover pacotes Zabbix no Ubuntu (agent + release)
+      ansible.builtin.apt:
+        name:
+          - zabbix-agent
+          - zabbix-release
+        state: absent
+        purge: yes
+        autoremove: yes
+      when: ansible_distribution == "Ubuntu"
+      failed_when: false
+
+    # SUSE 15
+    - name: Remover Zabbix Agent no SUSE
+      ansible.builtin.command: >
+        zypper --non-interactive remove -u zabbix-agent
+      when: ansible_os_family == "Suse"
+      register: zypper_remove
+      failed_when: false
+      changed_when: "'Removing' in zypper_remove.stdout"
+
+    - name: Remover repositório Zabbix no SUSE (se existir)
+      ansible.builtin.file:
+        path: /etc/zypp/repos.d/zabbix.repo
+        state: absent
+      when: ansible_os_family == "Suse"
+      failed_when: false
+
+    # ---------- LIMPEZA DE ARQUIVOS/DIRETÓRIOS ----------
+    - name: Remover diretórios residuais do Zabbix
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ zabbix_paths }}"
+      failed_when: false
+
+    # ---------- SYSTEMD ----------
+    - name: Recarregar daemon systemd
+      ansible.builtin.command: systemctl daemon-reload
+      changed_when: false
+      failed_when: false
+
+    - name: Resetar status de falhas do Zabbix Agent
+      ansible.builtin.shell: |
+        systemctl reset-failed zabbix-agent || true
+        systemctl reset-failed zabbix-agentd || true
+      changed_when: false
+      failed_when: false
+
+    # ---------- VALIDAÇÃO FINAL ----------
+    - name: Verificar se o serviço foi realmente removido
+      ansible.builtin.shell: |
+        systemctl is-active zabbix-agent 2>/dev/null || \
+        systemctl is-active zabbix-agentd 2>/dev/null || \
+        echo "removido"
+      register: zbx_status
+      changed_when: false
+      failed_when: false
+
+    - name: Exibir status final do Zabbix Agent
+      ansible.builtin.debug:
+        msg: |
+          🧹 {{ inventory_hostname }}:
+          - Sistema: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          - Status final do agente: {{ zbx_status.stdout }}
