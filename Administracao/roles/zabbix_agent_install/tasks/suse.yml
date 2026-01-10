@@ -1,44 +1,82 @@
 ---
 # openSUSE Leap 15.x
-# Instala Zabbix Agent 2 baixando RPM diretamente do repo.zabbix.com (sem zabbix-release/repo),
-# usando zypper para resolver dependências. Sem vars. Sem módulo zypper.
+# Instala Zabbix Agent direto por RPM (sem repo zabbix-release),
+# resolve locks do PackageKit, remove CD-ROM e sobe o serviço correto.
 
-- name: "SUSE | Remover repos CD-ROM (qualquer repo com URI cd:)"
+# ------------------------------------------------------------
+# (0) Mostrar SO
+# ------------------------------------------------------------
+- name: "SUSE | Mostrar distribuição"
   ansible.builtin.shell: |
-    set -e
-    # lista aliases com URL cd:
-    aliases="$(zypper -x lr -u | awk -F'[<>]' '
-      /<repo /{alias=""}
-      /<alias>/{alias=$3}
-      /<url>cd:/{print alias}
-    ' | sed '/^$/d' || true)"
+    . /etc/os-release
+    echo "$PRETTY_NAME"
+  register: _os
+  changed_when: false
 
-    if [ -n "$aliases" ]; then
-      for a in $aliases; do
-        zypper -n rr "$a" || true
-      done
-    fi
+- ansible.builtin.debug:
+    var: _os.stdout
+
+# ------------------------------------------------------------
+# (1) Parar e bloquear PackageKit (lock do zypper)
+# ------------------------------------------------------------
+- name: "SUSE | Parar PackageKit e liberar lock"
+  ansible.builtin.shell: |
+    systemctl stop packagekit.service 2>/dev/null || true
+    pkill -f /usr/lib/packagekitd 2>/dev/null || true
+
+    for i in $(seq 1 20); do
+      if ! pgrep -f /usr/lib/packagekitd >/dev/null 2>&1; then
+        exit 0
+      fi
+      sleep 1
+    done
+
+    echo "PackageKit ainda ativo"
+    pgrep -a -f /usr/lib/packagekitd || true
+    exit 1
   become: yes
   changed_when: false
-  failed_when: false
 
-- name: "SUSE | Garantir que curl ou wget exista (para baixar RPM)"
+- name: "SUSE | Desabilitar PackageKit (evitar lock durante automação)"
   ansible.builtin.shell: |
-    set -e
+    systemctl disable --now packagekit.service 2>/dev/null || true
+    systemctl mask packagekit.service 2>/dev/null || true
+  become: yes
+  changed_when: false
+
+# ------------------------------------------------------------
+# (2) Remover repositórios CD-ROM (ISO)
+# ------------------------------------------------------------
+- name: "SUSE | Remover repositórios CD-ROM"
+  ansible.builtin.shell: |
+    zypper -x lr -u | awk -F'[<>]' '
+      /<repo /{a=""}
+      /<alias>/{a=$3}
+      /<url>cd:/{print a}
+    ' | while read a; do
+      zypper -n rr "$a" || true
+    done
+  become: yes
+  changed_when: false
+
+# ------------------------------------------------------------
+# (3) Garantir curl ou wget
+# ------------------------------------------------------------
+- name: "SUSE | Garantir ferramenta de download"
+  ansible.builtin.shell: |
     if command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then
       exit 0
     fi
-    # tenta instalar curl (normalmente disponível nos repos do Leap)
     zypper -n refresh
     zypper -n in -y curl || zypper -n in -y wget
   become: yes
+  changed_when: false
 
-# Escolha do diretório:
-# - 6.0 é LTS (recomendado para estabilidade)
-# - 6.4 é mais novo (também ok)
-- name: "SUSE | Descobrir o RPM mais recente do Zabbix Agent2 (6.0 LTS)"
+# ------------------------------------------------------------
+# (4) Descobrir RPM mais recente do Zabbix Agent2 (6.0 LTS)
+# ------------------------------------------------------------
+- name: "SUSE | Descobrir URL do RPM zabbix-agent2"
   ansible.builtin.shell: |
-    set -e
     base="https://repo.zabbix.com/zabbix/6.0/sles/15/x86_64/"
 
     if command -v curl >/dev/null 2>&1; then
@@ -47,25 +85,22 @@
       html="$(wget -qO- "$base")"
     fi
 
-    # pega todos os nomes de RPM de agent2 e escolhe o maior por versão
     echo "$html" \
-      | grep -oE 'zabbix-agent2-[0-9][^"]+\.sles15\.x86_64\.rpm' \
+      | grep -oE 'zabbix-agent2-[^"]+\.sles15\.x86_64\.rpm' \
       | sort -V \
       | tail -n 1 \
       | awk -v b="$base" '{print b $1}'
   register: _agent2_url
   changed_when: false
 
-- name: "SUSE | Baixar RPM do Zabbix Agent2"
+# ------------------------------------------------------------
+# (5) Baixar e instalar Agent2
+# ------------------------------------------------------------
+- name: "SUSE | Baixar RPM zabbix-agent2"
   ansible.builtin.shell: |
-    set -e
     url="{{ _agent2_url.stdout }}"
+    test -n "$url"
     out="/tmp/zabbix-agent2.rpm"
-
-    if [ -z "$url" ]; then
-      echo "URL do agent2 vazia"
-      exit 2
-    fi
 
     if command -v curl >/dev/null 2>&1; then
       curl -fsSL "$url" -o "$out"
@@ -74,21 +109,21 @@
     fi
 
     echo "$out"
-  register: _agent2_rpm_path
+  register: _agent2_rpm
+  become: yes
   changed_when: false
-  become: yes
 
-- name: "SUSE | Instalar Zabbix Agent2 a partir do RPM (resolvendo dependências com zypper)"
-  ansible.builtin.command: "zypper -n in -y --allow-unsigned-rpm {{ _agent2_rpm_path.stdout }}"
+- name: "SUSE | Instalar zabbix-agent2 via zypper"
+  ansible.builtin.command: "zypper -n in -y --allow-unsigned-rpm {{ _agent2_rpm.stdout }}"
   register: _install_agent2
-  changed_when: true
-  failed_when: false
   become: yes
+  failed_when: false
 
-# Fallback para agent1 caso agent2 falhe (por deps, arch, etc.)
-- name: "SUSE | Descobrir o RPM mais recente do Zabbix Agent (agent1) como fallback"
+# ------------------------------------------------------------
+# (6) Fallback Agent1 se Agent2 falhar
+# ------------------------------------------------------------
+- name: "SUSE | Descobrir URL do RPM zabbix-agent (fallback)"
   ansible.builtin.shell: |
-    set -e
     base="https://repo.zabbix.com/zabbix/6.0/sles/15/x86_64/"
 
     if command -v curl >/dev/null 2>&1; then
@@ -98,18 +133,18 @@
     fi
 
     echo "$html" \
-      | grep -oE 'zabbix-agent-[0-9][^"]+\.sles15\.x86_64\.rpm' \
+      | grep -oE 'zabbix-agent-[^"]+\.sles15\.x86_64\.rpm' \
       | sort -V \
       | tail -n 1 \
       | awk -v b="$base" '{print b $1}'
   register: _agent1_url
-  changed_when: false
   when: _install_agent2.rc != 0
+  changed_when: false
 
-- name: "SUSE | Baixar RPM do Zabbix Agent (fallback)"
+- name: "SUSE | Baixar RPM zabbix-agent (fallback)"
   ansible.builtin.shell: |
-    set -e
     url="{{ _agent1_url.stdout }}"
+    test -n "$url"
     out="/tmp/zabbix-agent.rpm"
 
     if command -v curl >/dev/null 2>&1; then
@@ -119,46 +154,46 @@
     fi
 
     echo "$out"
-  register: _agent1_rpm_path
+  register: _agent1_rpm
+  become: yes
+  when: _install_agent2.rc != 0
   changed_when: false
-  become: yes
-  when: _install_agent2.rc != 0
 
-- name: "SUSE | Instalar Zabbix Agent (fallback) a partir do RPM"
-  ansible.builtin.command: "zypper -n in -y --allow-unsigned-rpm {{ _agent1_rpm_path.stdout }}"
+- name: "SUSE | Instalar zabbix-agent (fallback)"
+  ansible.builtin.command: "zypper -n in -y --allow-unsigned-rpm {{ _agent1_rpm.stdout }}"
   register: _install_agent1
-  changed_when: true
-  failed_when: false
   become: yes
   when: _install_agent2.rc != 0
+  failed_when: false
 
-- name: "SUSE | Falhar se não conseguiu instalar agent2 nem agent1"
+- name: "SUSE | Falhar se nenhum agente instalou"
   ansible.builtin.fail:
-    msg: >-
+    msg: |
       Falha ao instalar Zabbix Agent no SUSE.
       agent2 rc={{ _install_agent2.rc }} stderr={{ _install_agent2.stderr | default('') }}
-      agent1 rc={{ (_install_agent1.rc if _install_agent1 is defined else 'N/A') }} stderr={{ (_install_agent1.stderr if _install_agent1 is defined else '') }}
-      Causas comuns: DNS/proxy, TLS, ou dependências não disponíveis nos repos do SUSE.
+      agent1 rc={{ (_install_agent1.rc if _install_agent1 is defined else 'N/A') }}
   when: _install_agent2.rc != 0 and (_install_agent1 is not defined or _install_agent1.rc != 0)
 
-- name: "SUSE | Descobrir unit do Zabbix Agent no systemd"
+# ------------------------------------------------------------
+# (7) Descobrir unit systemd e iniciar serviço
+# ------------------------------------------------------------
+- name: "SUSE | Descobrir unit do Zabbix"
   ansible.builtin.shell: |
-    set -e
-    systemctl list-unit-files --no-pager | awk '{print $1}' | \
-      grep -iE '^zabbix(-agent2|-agent|_agentd)\.service$' || true
+    systemctl list-unit-files --no-pager \
+      | awk '{print $1}' \
+      | grep -iE '^zabbix(-agent2|-agent|_agentd)\.service$' || true
   register: _units
   changed_when: false
-  failed_when: false
 
-- name: "SUSE | Falhar se não existir unit após instalação"
+- name: "SUSE | Falhar se não houver unit"
   ansible.builtin.fail:
-    msg: "Instalou pacote, mas nenhum unit do Zabbix foi encontrado. Units: {{ _units.stdout_lines | default([]) }}"
-  when: (_units.stdout_lines | default([]) | length) == 0
+    msg: "Nenhum unit Zabbix encontrado após instalação. Units: {{ _units.stdout_lines }}"
+  when: (_units.stdout_lines | length) == 0
 
-- name: "SUSE | Selecionar serviço a partir do unit"
+- name: "SUSE | Selecionar serviço"
   ansible.builtin.set_fact:
     _zabbix_service: "{{ (_units.stdout_lines | first) | regex_replace('\\.service$', '') }}"
 
-- name: "SUSE | Habilitar e iniciar Zabbix Agent"
+- name: "SUSE | Habilitar e iniciar serviço"
   ansible.builtin.command: "systemctl enable --now {{ _zabbix_service }}"
   become: yes
