@@ -1,14 +1,16 @@
 ---
-# roles/zabbix_agent_install/tasks/suse.yml
-# Compatível com SLES15 / openSUSE Leap 15
+# SUSE Linux Enterprise 15 / openSUSE Leap 15
+# Zabbix Agent installation and service management (robust version)
 
-- name: "SUSE | Mostrar distro (debug leve)"
+- name: "SUSE | Mostrar distribuição"
   ansible.builtin.debug:
     msg: "SUSE detectado: {{ ansible_distribution }} {{ ansible_distribution_major_version }}"
 
-# Escolha do pacote: se você definir zabbix_agent_pkg_suse, ele usa.
-# Se não definir, tenta agent2 (preferido) e depois agent1.
-- name: "SUSE | Definir pacote preferido (default agent2)"
+# -------------------------------------------------------------------
+# Instalação do pacote
+# -------------------------------------------------------------------
+
+- name: "SUSE | Definir pacote preferido do Zabbix Agent (default: agent2)"
   ansible.builtin.set_fact:
     _zabbix_pkg_preferido: "{{ zabbix_agent_pkg_suse | default('zabbix-agent2') }}"
 
@@ -27,19 +29,25 @@
   become: yes
   when: _pkg_try is failed
 
-# (Opcional) Debug dos pacotes instalados — ajuda a entender o que existe no host
-- name: "SUSE | Debug pacotes Zabbix instalados"
+# -------------------------------------------------------------------
+# Diagnóstico de pacotes instalados
+# -------------------------------------------------------------------
+
+- name: "SUSE | Listar pacotes Zabbix instalados"
   ansible.builtin.shell: "rpm -qa | grep -i '^zabbix' || true"
   register: _zabbix_pkgs
   changed_when: false
   failed_when: false
 
-- name: "SUSE | Debug pacotes (stdout)"
+- name: "SUSE | Debug pacotes Zabbix"
   ansible.builtin.debug:
     var: _zabbix_pkgs.stdout_lines
 
-# Descobrir unit REAL (não chute de nome)
-- name: "SUSE | Descobrir unit do Zabbix Agent"
+# -------------------------------------------------------------------
+# Descoberta REAL do unit do systemd
+# -------------------------------------------------------------------
+
+- name: "SUSE | Descobrir unit do Zabbix Agent no systemd"
   ansible.builtin.shell: |
     set -o pipefail
     systemctl list-unit-files --no-pager | awk '{print $1}' | \
@@ -52,28 +60,34 @@
   ansible.builtin.debug:
     var: _zabbix_units.stdout_lines
 
-- name: "SUSE | Falhar se não existir unit do Zabbix Agent"
+# -------------------------------------------------------------------
+# Validações fortes (fail-fast)
+# -------------------------------------------------------------------
+
+- name: "SUSE | Falhar se nenhum unit do Zabbix Agent for encontrado"
   ansible.builtin.fail:
     msg: >-
       Nenhum unit do Zabbix Agent encontrado no systemd.
       Units retornadas: {{ _zabbix_units.stdout_lines | default([]) }}
       Pacotes Zabbix instalados: {{ _zabbix_pkgs.stdout_lines | default([]) }}
-      Provável causa: pacote não instalou (repo) ou o nome do serviço é diferente.
+      Verifique repositório/pacote do Zabbix para SUSE 15.
   when: (_zabbix_units.stdout_lines | default([]) | length) == 0
 
-- name: "SUSE | Escolher serviço (prioriza agent2)"
-  ansible.builtin.set_fact:
-    _zabbix_service: >-
-      {% if 'zabbix-agent2.service' in _zabbix_units.stdout_lines %}zabbix-agent2
-      {% elif 'zabbix-agent.service' in _zabbix_units.stdout_lines %}zabbix-agent
-      {% elif 'zabbix_agentd.service' in _zabbix_units.stdout_lines %}zabbix_agentd
-      {% else %}{% endif %}
+# -------------------------------------------------------------------
+# Seleção segura do serviço (sem chute)
+# -------------------------------------------------------------------
 
-- name: "SUSE | Validar que o unit escolhido existe"
-  ansible.builtin.shell: "systemctl status {{ _zabbix_service }} >/dev/null 2>&1"
-  register: _unit_status
-  changed_when: false
-  failed_when: _unit_status.rc != 0
+- name: "SUSE | Selecionar unit do Zabbix Agent"
+  ansible.builtin.set_fact:
+    _zabbix_unit_file: "{{ (_zabbix_units.stdout_lines | first) }}"
+
+- name: "SUSE | Derivar nome do serviço a partir do unit"
+  ansible.builtin.set_fact:
+    _zabbix_service: "{{ _zabbix_unit_file | regex_replace('\\.service$', '') }}"
+
+# -------------------------------------------------------------------
+# Ativação do serviço
+# -------------------------------------------------------------------
 
 - name: "SUSE | Habilitar e iniciar Zabbix Agent"
   ansible.builtin.service:
