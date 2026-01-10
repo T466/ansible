@@ -1,30 +1,83 @@
-- name: "SUSE15 | Descobrir serviço do Zabbix Agent via systemctl"
-  ansible.builtin.shell: |
-    set -o pipefail
-    systemctl list-unit-files --no-pager | awk '{print $1}' | grep -iE '^zabbix(-agent2|-agent|_agentd)\.service$' || true
-  register: zabbix_agent_units
+---
+# roles/zabbix_agent_install/tasks/suse.yml
+# Compatível com SLES15 / openSUSE Leap 15
+
+- name: "SUSE | Mostrar distro (debug leve)"
+  ansible.builtin.debug:
+    msg: "SUSE detectado: {{ ansible_distribution }} {{ ansible_distribution_major_version }}"
+
+# Escolha do pacote: se você definir zabbix_agent_pkg_suse, ele usa.
+# Se não definir, tenta agent2 (preferido) e depois agent1.
+- name: "SUSE | Definir pacote preferido (default agent2)"
+  ansible.builtin.set_fact:
+    _zabbix_pkg_preferido: "{{ zabbix_agent_pkg_suse | default('zabbix-agent2') }}"
+
+- name: "SUSE | Instalar pacote preferido"
+  ansible.builtin.package:
+    name: "{{ _zabbix_pkg_preferido }}"
+    state: present
+  become: yes
+  register: _pkg_try
+  failed_when: false
+
+- name: "SUSE | Fallback: instalar zabbix-agent (agent1) se o preferido falhar"
+  ansible.builtin.package:
+    name: "zabbix-agent"
+    state: present
+  become: yes
+  when: _pkg_try is failed
+
+# (Opcional) Debug dos pacotes instalados — ajuda a entender o que existe no host
+- name: "SUSE | Debug pacotes Zabbix instalados"
+  ansible.builtin.shell: "rpm -qa | grep -i '^zabbix' || true"
+  register: _zabbix_pkgs
   changed_when: false
   failed_when: false
 
-- name: "SUSE15 | Falhar se não existir nenhum unit do Zabbix Agent"
+- name: "SUSE | Debug pacotes (stdout)"
+  ansible.builtin.debug:
+    var: _zabbix_pkgs.stdout_lines
+
+# Descobrir unit REAL (não chute de nome)
+- name: "SUSE | Descobrir unit do Zabbix Agent"
+  ansible.builtin.shell: |
+    set -o pipefail
+    systemctl list-unit-files --no-pager | awk '{print $1}' | \
+      grep -iE '^zabbix(-agent2|-agent|_agentd)\.service$' || true
+  register: _zabbix_units
+  changed_when: false
+  failed_when: false
+
+- name: "SUSE | Debug units encontradas"
+  ansible.builtin.debug:
+    var: _zabbix_units.stdout_lines
+
+- name: "SUSE | Falhar se não existir unit do Zabbix Agent"
   ansible.builtin.fail:
     msg: >-
-      Nenhum unit do Zabbix Agent encontrado.
-      Units retornadas: {{ zabbix_agent_units.stdout_lines | default([]) }}
-      Verifique se o pacote foi instalado e se o repositório do Zabbix está disponível.
-  when: zabbix_agent_units.stdout_lines | default([]) | length == 0
+      Nenhum unit do Zabbix Agent encontrado no systemd.
+      Units retornadas: {{ _zabbix_units.stdout_lines | default([]) }}
+      Pacotes Zabbix instalados: {{ _zabbix_pkgs.stdout_lines | default([]) }}
+      Provável causa: pacote não instalou (repo) ou o nome do serviço é diferente.
+  when: (_zabbix_units.stdout_lines | default([]) | length) == 0
 
-- name: "SUSE15 | Escolher unit (prioriza agent2)"
+- name: "SUSE | Escolher serviço (prioriza agent2)"
   ansible.builtin.set_fact:
-    zabbix_agent_service_name_detected: >-
-      {% if 'zabbix-agent2.service' in zabbix_agent_units.stdout_lines %}zabbix-agent2
-      {% elif 'zabbix-agent.service' in zabbix_agent_units.stdout_lines %}zabbix-agent
-      {% elif 'zabbix_agentd.service' in zabbix_agent_units.stdout_lines %}zabbix_agentd
+    _zabbix_service: >-
+      {% if 'zabbix-agent2.service' in _zabbix_units.stdout_lines %}zabbix-agent2
+      {% elif 'zabbix-agent.service' in _zabbix_units.stdout_lines %}zabbix-agent
+      {% elif 'zabbix_agentd.service' in _zabbix_units.stdout_lines %}zabbix_agentd
       {% else %}{% endif %}
 
-- name: "SUSE15 | Habilitar e iniciar Zabbix Agent"
+- name: "SUSE | Validar que o unit escolhido existe"
+  ansible.builtin.shell: "systemctl status {{ _zabbix_service }} >/dev/null 2>&1"
+  register: _unit_status
+  changed_when: false
+  failed_when: _unit_status.rc != 0
+
+- name: "SUSE | Habilitar e iniciar Zabbix Agent"
   ansible.builtin.service:
-    name: "{{ zabbix_agent_service_name_detected }}"
+    name: "{{ _zabbix_service }}"
     state: started
     enabled: yes
   become: yes
