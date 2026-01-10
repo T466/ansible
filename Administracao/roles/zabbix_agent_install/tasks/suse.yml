@@ -1,57 +1,34 @@
----
-# suse15.yml
-
-- name: "SUSE15 | Garantir fatos básicos"
-  ansible.builtin.setup:
-    gather_subset:
-      - min
-
-# Se você não definir zabbix_agent_pkg_suse, ele tenta agent2 primeiro (mais moderno), depois agent1
-- name: "SUSE15 | Definir pacote padrão do Zabbix Agent (se não informado)"
-  ansible.builtin.set_fact:
-    zabbix_agent_pkg_suse: "{{ zabbix_agent_pkg_suse | default('zabbix-agent2') }}"
-
-- name: "SUSE15 | Instalar Zabbix Agent (pacote informado)"
-  ansible.builtin.package:
-    name: "{{ zabbix_agent_pkg_suse }}"
-    state: present
-  become: yes
-  register: zabbix_pkg_try
-  failed_when: false
-
-- name: "SUSE15 | Fallback: instalar zabbix-agent (agent1) se zabbix-agent2 falhar"
-  ansible.builtin.package:
-    name: "zabbix-agent"
-    state: present
-  become: yes
-  when: zabbix_pkg_try is failed or (zabbix_pkg_try.rc is defined and zabbix_pkg_try.rc != 0)
-  register: zabbix_pkg_fallback
-
 - name: "SUSE15 | Listar unit files do systemd relacionados ao Zabbix"
   ansible.builtin.shell: "systemctl list-unit-files --no-pager | awk '{print $1}' | grep -i '^zabbix' || true"
   register: zabbix_units
   changed_when: false
   failed_when: false
 
-- name: "SUSE15 | Determinar nome do serviço do Zabbix Agent"
+- name: "SUSE15 | Definir serviço do Zabbix Agent (FORÇAR autodetecção)"
   ansible.builtin.set_fact:
-    zabbix_agent_service_name: >-
+    zabbix_agent_service_name_detected: >-
       {% if 'zabbix-agent2.service' in zabbix_units.stdout_lines %}zabbix-agent2
       {% elif 'zabbix-agent.service' in zabbix_units.stdout_lines %}zabbix-agent
       {% elif 'zabbix_agentd.service' in zabbix_units.stdout_lines %}zabbix_agentd
       {% else %}{% endif %}
 
-- name: "SUSE15 | Falhar com mensagem clara se não encontrar unit do Zabbix Agent"
+- name: "SUSE15 | Falhar se não foi possível detectar unit do Zabbix"
   ansible.builtin.fail:
     msg: >-
       Não encontrei unit do Zabbix Agent no systemd.
-      Saída de units encontradas: {{ zabbix_units.stdout_lines | default([]) }}.
-      Verifique se o pacote instalou corretamente (repo/versão) e qual agent está disponível (zabbix-agent vs zabbix-agent2).
-  when: zabbix_agent_service_name is not defined or zabbix_agent_service_name | length == 0
+      Units encontradas: {{ zabbix_units.stdout_lines | default([]) }}
+      Pacotes Zabbix instalados: (rode) rpm -qa | grep -i zabbix
+  when: zabbix_agent_service_name_detected is not defined or (zabbix_agent_service_name_detected | length == 0)
 
-- name: "SUSE15 | Habilitar e iniciar Zabbix Agent"
+- name: "SUSE15 | Validar que o unit detectado realmente existe"
+  ansible.builtin.shell: "systemctl status {{ zabbix_agent_service_name_detected }} >/dev/null 2>&1"
+  register: zabbix_unit_status
+  changed_when: false
+  failed_when: zabbix_unit_status.rc != 0
+
+- name: "SUSE15 | Habilitar e iniciar Zabbix Agent (usando o unit detectado)"
   ansible.builtin.service:
-    name: "{{ zabbix_agent_service_name }}"
+    name: "{{ zabbix_agent_service_name_detected }}"
     state: started
     enabled: yes
   become: yes
