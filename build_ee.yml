@@ -1,0 +1,2 @@
+---
+- import_playbook: ee-factory/playbooks/build_ee.yml
