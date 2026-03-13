@@ -4,32 +4,31 @@
   gather_facts: false
 
   vars:
-    ee_name: "{{ ee_name | default('custom-ee') }}"
-    ee_tag: "{{ ee_tag | default('1.0') }}"
-    collections:
-      - community.general
+    target_ee_name: "{{ ee_name_input | default('custom-ee') }}"
+    target_ee_tag: "{{ ee_tag_input | default('1.0') }}"
+    target_collections: "{{ collections_input | default(['community.general']) }}"
 
   tasks:
     - name: Create build directory
       ansible.builtin.file:
-        path: "/tmp/{{ ee_name }}"
+        path: "/tmp/{{ target_ee_name }}"
         state: directory
 
     - name: Generate requirements.yml
       ansible.builtin.template:
         src: ../templates/requirements.yml.j2
-        dest: "/tmp/{{ ee_name }}/requirements.yml"
+        dest: "/tmp/{{ target_ee_name }}/requirements.yml"
 
     - name: Generate execution-environment.yml
       ansible.builtin.template:
         src: ../templates/execution-environment.yml.j2
-        dest: "/tmp/{{ ee_name }}/execution-environment.yml"
+        dest: "/tmp/{{ target_ee_name }}/execution-environment.yml"
 
     - name: Build Execution Environment
       ansible.builtin.command:
-        cmd: ansible-builder build -t {{ ee_name }}:{{ ee_tag }}
-        chdir: "/tmp/{{ ee_name }}"
+        cmd: ansible-builder build -t {{ target_ee_name }}:{{ target_ee_tag }}
+        chdir: "/tmp/{{ target_ee_name }}"
 
     - name: Show build result
       ansible.builtin.debug:
-        msg: "EE {{ ee_name }}:{{ ee_tag }} built successfully"
+        msg: "EE {{ target_ee_name }}:{{ target_ee_tag }} built successfully"
