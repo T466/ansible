@@ -24,10 +24,44 @@
         src: ../templates/execution-environment.yml.j2
         dest: "/tmp/{{ target_ee_name }}/execution-environment.yml"
 
+    - name: Show PATH
+      ansible.builtin.shell: 'echo $PATH'
+      register: ee_path
+      changed_when: false
+
+    - name: Check ansible-builder
+      ansible.builtin.shell: 'which ansible-builder'
+      register: ansible_builder_check
+      changed_when: false
+      failed_when: false
+
+    - name: Check podman
+      ansible.builtin.shell: 'which podman'
+      register: podman_check
+      changed_when: false
+      failed_when: false
+
+    - name: Show runtime info
+      ansible.builtin.debug:
+        msg:
+          - "PATH={{ ee_path.stdout }}"
+          - "ansible-builder={{ ansible_builder_check.stdout | default('NOT_FOUND') }}"
+          - "podman={{ podman_check.stdout | default('NOT_FOUND') }}"
+
+    - name: Fail if ansible-builder is missing
+      ansible.builtin.fail:
+        msg: "ansible-builder não está disponível dentro do Execution Environment ee-builder"
+      when: ansible_builder_check.stdout | trim == ""
+
     - name: Build Execution Environment
       ansible.builtin.command:
-        cmd: ansible-builder build -t {{ target_ee_name }}:{{ target_ee_tag }}
+        cmd: ansible-builder build -f execution-environment.yml -t {{ target_ee_name }}:{{ target_ee_tag }}
         chdir: "/tmp/{{ target_ee_name }}"
+      register: build_result
+
+    - name: Show build stdout
+      ansible.builtin.debug:
+        var: build_result.stdout_lines
 
     - name: Show build result
       ansible.builtin.debug:
