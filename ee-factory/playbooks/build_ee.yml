@@ -4,15 +4,18 @@
   gather_facts: false
 
   vars:
+    registry_host: "{{ registry_host_input | default('192.168.15.20:5000') }}"
     target_ee_name: "{{ ee_name_input | default('custom-ee') }}"
     target_ee_tag: "{{ ee_tag_input | default('1.0') }}"
     target_collections: "{{ collections_input | default(['community.general']) }}"
+    target_image_full: "{{ registry_host }}/{{ target_ee_name }}:{{ target_ee_tag }}"
 
   tasks:
     - name: Create build directory
       ansible.builtin.file:
         path: "/tmp/{{ target_ee_name }}"
         state: directory
+        mode: '0755'
 
     - name: Generate requirements.yml
       ansible.builtin.template:
@@ -47,6 +50,7 @@
           - "PATH={{ ee_path.stdout }}"
           - "ansible-builder={{ ansible_builder_check.stdout | default('NOT_FOUND') }}"
           - "podman={{ podman_check.stdout | default('NOT_FOUND') }}"
+          - "target_image_full={{ target_image_full }}"
 
     - name: Fail if ansible-builder is missing
       ansible.builtin.fail:
@@ -55,7 +59,7 @@
 
     - name: Build Execution Environment
       ansible.builtin.command:
-        cmd: ansible-builder build -f execution-environment.yml -t {{ target_ee_name }}:{{ target_ee_tag }}
+        cmd: ansible-builder build -f execution-environment.yml -t {{ target_image_full }}
         chdir: "/tmp/{{ target_ee_name }}"
       register: build_result
 
@@ -63,6 +67,15 @@
       ansible.builtin.debug:
         var: build_result.stdout_lines
 
-    - name: Show build result
+    - name: Push Execution Environment to local registry
+      ansible.builtin.command:
+        cmd: podman push --tls-verify=false {{ target_image_full }}
+      register: push_result
+
+    - name: Show push stdout
       ansible.builtin.debug:
-        msg: "EE {{ target_ee_name }}:{{ target_ee_tag }} built successfully"
+        var: push_result.stdout_lines
+
+    - name: Show final result
+      ansible.builtin.debug:
+        msg: "EE {{ target_image_full }} built and pushed successfully"
