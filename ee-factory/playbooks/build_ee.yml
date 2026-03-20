@@ -14,13 +14,14 @@
     ansible_builder_bin: "/usr/local/bin/ansible-builder"
     podman_bin: "/usr/bin/podman"
     git_bin: "/usr/bin/git"
+    podman_registries_conf: "/etc/containers/registries.conf"
 
   tasks:
     - name: Create build directory
       ansible.builtin.file:
         path: "/tmp/{{ target_ee_name }}"
         state: directory
-        mode: '0755'
+        mode: "0755"
 
     - name: Generate requirements.yml
       ansible.builtin.template:
@@ -38,6 +39,7 @@
         executable: /bin/bash
       environment:
         PATH: "{{ ee_runtime_path }}"
+        CONTAINERS_REGISTRIES_CONF: "{{ podman_registries_conf }}"
       register: ee_path
       changed_when: false
 
@@ -50,6 +52,7 @@
         executable: /bin/bash
       environment:
         PATH: "{{ ee_runtime_path }}"
+        CONTAINERS_REGISTRIES_CONF: "{{ podman_registries_conf }}"
       register: ansible_builder_check
       changed_when: false
       failed_when: false
@@ -63,6 +66,7 @@
         executable: /bin/bash
       environment:
         PATH: "{{ ee_runtime_path }}"
+        CONTAINERS_REGISTRIES_CONF: "{{ podman_registries_conf }}"
       register: podman_check
       changed_when: false
       failed_when: false
@@ -76,6 +80,7 @@
         executable: /bin/bash
       environment:
         PATH: "{{ ee_runtime_path }}"
+        CONTAINERS_REGISTRIES_CONF: "{{ podman_registries_conf }}"
       register: git_check
       changed_when: false
       failed_when: false
@@ -94,6 +99,7 @@
           - "git stdout={{ git_check.stdout_lines | default([]) }}"
           - "git stderr={{ git_check.stderr_lines | default([]) }}"
           - "target_image_full={{ target_image_full }}"
+          - "CONTAINERS_REGISTRIES_CONF={{ podman_registries_conf }}"
 
     - name: Fail if ansible-builder is missing
       ansible.builtin.fail:
@@ -105,28 +111,45 @@
         msg: "podman não está disponível dentro do Execution Environment ee-builder"
       when: podman_check.rc != 0
 
+    - name: Fail if git is missing
+      ansible.builtin.fail:
+        msg: "git não está disponível dentro do Execution Environment ee-builder"
+      when: git_check.rc != 0
+
     - name: Build Execution Environment
       ansible.builtin.command:
         cmd: "{{ ansible_builder_bin }} build -f execution-environment.yml -t {{ target_image_full }}"
         chdir: "/tmp/{{ target_ee_name }}"
       environment:
         PATH: "{{ ee_runtime_path }}"
+        CONTAINERS_REGISTRIES_CONF: "{{ podman_registries_conf }}"
       register: build_result
 
     - name: Show build stdout
       ansible.builtin.debug:
         var: build_result.stdout_lines
 
+    - name: Show build stderr
+      ansible.builtin.debug:
+        var: build_result.stderr_lines
+      when: build_result.stderr_lines is defined
+
     - name: Push Execution Environment to local registry
       ansible.builtin.command:
         cmd: "{{ podman_bin }} push --tls-verify=false {{ target_image_full }}"
       environment:
         PATH: "{{ ee_runtime_path }}"
+        CONTAINERS_REGISTRIES_CONF: "{{ podman_registries_conf }}"
       register: push_result
 
     - name: Show push stdout
       ansible.builtin.debug:
         var: push_result.stdout_lines
+
+    - name: Show push stderr
+      ansible.builtin.debug:
+        var: push_result.stderr_lines
+      when: push_result.stderr_lines is defined
 
     - name: Show final result
       ansible.builtin.debug:
