@@ -21,12 +21,26 @@
     build_log_file: "{{ build_dir }}/podman-build.log"
     push_log_file: "{{ build_dir }}/podman-push.log"
 
+    podman_home: "{{ build_dir }}/home"
+    podman_runroot: "{{ build_dir }}/run"
+    podman_tmpdir: "{{ build_dir }}/tmp"
+
   tasks:
     - name: Create build directory
       ansible.builtin.file:
         path: "{{ build_dir }}"
         state: directory
         mode: "0755"
+
+    - name: Create podman runtime directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0700"
+      loop:
+        - "{{ podman_home }}"
+        - "{{ podman_runroot }}"
+        - "{{ podman_tmpdir }}"
 
     - name: Generate requirements.yml
       ansible.builtin.template:
@@ -44,6 +58,9 @@
           - "builder_image={{ builder_image }}"
           - "target_image_full={{ target_image_full }}"
           - "build_dir={{ build_dir }}"
+          - "HOME={{ podman_home }}"
+          - "XDG_RUNTIME_DIR={{ podman_runroot }}"
+          - "TMPDIR={{ podman_tmpdir }}"
 
     - name: Show generated execution-environment.yml
       ansible.builtin.command:
@@ -61,6 +78,9 @@
         executable: /bin/bash
       environment:
         PATH: "{{ ee_runtime_path }}"
+        HOME: "{{ podman_home }}"
+        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
+        TMPDIR: "{{ podman_tmpdir }}"
       register: ee_path
       changed_when: false
 
@@ -73,6 +93,9 @@
         executable: /bin/bash
       environment:
         PATH: "{{ ee_runtime_path }}"
+        HOME: "{{ podman_home }}"
+        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
+        TMPDIR: "{{ podman_tmpdir }}"
       register: ansible_builder_check
       changed_when: false
       failed_when: false
@@ -86,6 +109,9 @@
         executable: /bin/bash
       environment:
         PATH: "{{ ee_runtime_path }}"
+        HOME: "{{ podman_home }}"
+        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
+        TMPDIR: "{{ podman_tmpdir }}"
       register: podman_check
       changed_when: false
       failed_when: false
@@ -99,6 +125,9 @@
         executable: /bin/bash
       environment:
         PATH: "{{ ee_runtime_path }}"
+        HOME: "{{ podman_home }}"
+        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
+        TMPDIR: "{{ podman_tmpdir }}"
       register: git_check
       changed_when: false
       failed_when: false
@@ -132,11 +161,49 @@
         msg: "git não está disponível dentro do Execution Environment ee-builder"
       when: git_check.rc != 0
 
+    - name: Reset podman rootless state
+      ansible.builtin.command:
+        cmd: "{{ podman_bin }} system migrate"
+      environment:
+        PATH: "{{ ee_runtime_path }}"
+        HOME: "{{ podman_home }}"
+        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
+        TMPDIR: "{{ podman_tmpdir }}"
+      register: podman_migrate_result
+      changed_when: false
+      failed_when: false
+
+    - name: Show podman migrate result
+      ansible.builtin.debug:
+        msg:
+          - "podman system migrate rc={{ podman_migrate_result.rc }}"
+          - "stdout={{ podman_migrate_result.stdout_lines | default([]) }}"
+          - "stderr={{ podman_migrate_result.stderr_lines | default([]) }}"
+
+    - name: Show podman info
+      ansible.builtin.command:
+        cmd: "{{ podman_bin }} info"
+      environment:
+        PATH: "{{ ee_runtime_path }}"
+        HOME: "{{ podman_home }}"
+        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
+        TMPDIR: "{{ podman_tmpdir }}"
+      register: podman_info_result
+      changed_when: false
+      failed_when: false
+
+    - name: Display podman info
+      ansible.builtin.debug:
+        var: podman_info_result.stdout_lines
+
     - name: Show local images before build
       ansible.builtin.command:
         cmd: "{{ podman_bin }} images"
       environment:
         PATH: "{{ ee_runtime_path }}"
+        HOME: "{{ podman_home }}"
+        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
+        TMPDIR: "{{ podman_tmpdir }}"
       register: podman_images_result
       changed_when: false
 
@@ -150,6 +217,9 @@
         chdir: "{{ build_dir }}"
       environment:
         PATH: "{{ ee_runtime_path }}"
+        HOME: "{{ podman_home }}"
+        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
+        TMPDIR: "{{ podman_tmpdir }}"
       register: create_result
 
     - name: Show create stdout
@@ -189,6 +259,9 @@
         chdir: "{{ build_dir }}"
       environment:
         PATH: "{{ ee_runtime_path }}"
+        HOME: "{{ podman_home }}"
+        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
+        TMPDIR: "{{ podman_tmpdir }}"
       register: build_result
       changed_when: true
       failed_when: false
@@ -234,6 +307,9 @@
         executable: /bin/bash
       environment:
         PATH: "{{ ee_runtime_path }}"
+        HOME: "{{ podman_home }}"
+        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
+        TMPDIR: "{{ podman_tmpdir }}"
       register: push_result
       changed_when: true
       failed_when: false
