@@ -2,7 +2,7 @@ version: 3
 
 images:
   base_image:
-    name: "{{ builder_image | default('192.168.15.20:5000/ee-builder:1.1') }}"
+    name: "{{ builder_image }}"
 
 dependencies:
   galaxy: requirements.yml
