@@ -22,25 +22,54 @@
     push_log_file: "{{ build_dir }}/podman-push.log"
 
     podman_home: "{{ build_dir }}/home"
-    podman_runroot: "{{ build_dir }}/run"
     podman_tmpdir: "{{ build_dir }}/tmp"
+    podman_graphroot: "{{ build_dir }}/containers/storage"
+    podman_runroot: "{{ build_dir }}/containers/runroot"
+    podman_config_dir: "{{ podman_home }}/.config/containers"
+    podman_storage_conf: "{{ podman_config_dir }}/storage.conf"
+
+    podman_common_env:
+      PATH: "{{ ee_runtime_path }}"
+      HOME: "{{ podman_home }}"
+      TMPDIR: "{{ podman_tmpdir }}"
+      CONTAINERS_STORAGE_CONF: "{{ podman_storage_conf }}"
 
   tasks:
-    - name: Create build directory
-      ansible.builtin.file:
-        path: "{{ build_dir }}"
-        state: directory
-        mode: "0755"
-
-    - name: Create podman runtime directories
+    - name: Create build directory tree
       ansible.builtin.file:
         path: "{{ item }}"
         state: directory
         mode: "0700"
       loop:
+        - "{{ build_dir }}"
         - "{{ podman_home }}"
-        - "{{ podman_runroot }}"
         - "{{ podman_tmpdir }}"
+        - "{{ podman_graphroot }}"
+        - "{{ podman_runroot }}"
+        - "{{ podman_config_dir }}"
+
+    - name: Create storage.conf for rootless podman
+      ansible.builtin.copy:
+        dest: "{{ podman_storage_conf }}"
+        mode: "0600"
+        content: |
+          [storage]
+          driver = "vfs"
+          runroot = "{{ podman_runroot }}"
+          graphroot = "{{ podman_graphroot }}"
+
+          [storage.options]
+          additionalimagestores = []
+
+    - name: Show storage.conf
+      ansible.builtin.command:
+        cmd: cat "{{ podman_storage_conf }}"
+      register: storage_conf_result
+      changed_when: false
+
+    - name: Display storage.conf
+      ansible.builtin.debug:
+        var: storage_conf_result.stdout_lines
 
     - name: Generate requirements.yml
       ansible.builtin.template:
@@ -58,9 +87,10 @@
           - "builder_image={{ builder_image }}"
           - "target_image_full={{ target_image_full }}"
           - "build_dir={{ build_dir }}"
-          - "HOME={{ podman_home }}"
-          - "XDG_RUNTIME_DIR={{ podman_runroot }}"
-          - "TMPDIR={{ podman_tmpdir }}"
+          - "podman_graphroot={{ podman_graphroot }}"
+          - "podman_runroot={{ podman_runroot }}"
+          - "podman_tmpdir={{ podman_tmpdir }}"
+          - "podman_storage_conf={{ podman_storage_conf }}"
 
     - name: Show generated execution-environment.yml
       ansible.builtin.command:
@@ -76,11 +106,7 @@
       ansible.builtin.shell: 'echo "$PATH"'
       args:
         executable: /bin/bash
-      environment:
-        PATH: "{{ ee_runtime_path }}"
-        HOME: "{{ podman_home }}"
-        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
-        TMPDIR: "{{ podman_tmpdir }}"
+      environment: "{{ podman_common_env }}"
       register: ee_path
       changed_when: false
 
@@ -91,11 +117,7 @@
         {{ ansible_builder_bin }} --version
       args:
         executable: /bin/bash
-      environment:
-        PATH: "{{ ee_runtime_path }}"
-        HOME: "{{ podman_home }}"
-        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
-        TMPDIR: "{{ podman_tmpdir }}"
+      environment: "{{ podman_common_env }}"
       register: ansible_builder_check
       changed_when: false
       failed_when: false
@@ -107,11 +129,7 @@
         {{ podman_bin }} --version
       args:
         executable: /bin/bash
-      environment:
-        PATH: "{{ ee_runtime_path }}"
-        HOME: "{{ podman_home }}"
-        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
-        TMPDIR: "{{ podman_tmpdir }}"
+      environment: "{{ podman_common_env }}"
       register: podman_check
       changed_when: false
       failed_when: false
@@ -123,11 +141,7 @@
         {{ git_bin }} --version
       args:
         executable: /bin/bash
-      environment:
-        PATH: "{{ ee_runtime_path }}"
-        HOME: "{{ podman_home }}"
-        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
-        TMPDIR: "{{ podman_tmpdir }}"
+      environment: "{{ podman_common_env }}"
       register: git_check
       changed_when: false
       failed_when: false
@@ -161,33 +175,10 @@
         msg: "git não está disponível dentro do Execution Environment ee-builder"
       when: git_check.rc != 0
 
-    - name: Reset podman rootless state
-      ansible.builtin.command:
-        cmd: "{{ podman_bin }} system migrate"
-      environment:
-        PATH: "{{ ee_runtime_path }}"
-        HOME: "{{ podman_home }}"
-        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
-        TMPDIR: "{{ podman_tmpdir }}"
-      register: podman_migrate_result
-      changed_when: false
-      failed_when: false
-
-    - name: Show podman migrate result
-      ansible.builtin.debug:
-        msg:
-          - "podman system migrate rc={{ podman_migrate_result.rc }}"
-          - "stdout={{ podman_migrate_result.stdout_lines | default([]) }}"
-          - "stderr={{ podman_migrate_result.stderr_lines | default([]) }}"
-
     - name: Show podman info
       ansible.builtin.command:
         cmd: "{{ podman_bin }} info"
-      environment:
-        PATH: "{{ ee_runtime_path }}"
-        HOME: "{{ podman_home }}"
-        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
-        TMPDIR: "{{ podman_tmpdir }}"
+      environment: "{{ podman_common_env }}"
       register: podman_info_result
       changed_when: false
       failed_when: false
@@ -199,11 +190,7 @@
     - name: Show local images before build
       ansible.builtin.command:
         cmd: "{{ podman_bin }} images"
-      environment:
-        PATH: "{{ ee_runtime_path }}"
-        HOME: "{{ podman_home }}"
-        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
-        TMPDIR: "{{ podman_tmpdir }}"
+      environment: "{{ podman_common_env }}"
       register: podman_images_result
       changed_when: false
 
@@ -215,11 +202,7 @@
       ansible.builtin.command:
         cmd: "{{ ansible_builder_bin }} create -f execution-environment.yml"
         chdir: "{{ build_dir }}"
-      environment:
-        PATH: "{{ ee_runtime_path }}"
-        HOME: "{{ podman_home }}"
-        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
-        TMPDIR: "{{ podman_tmpdir }}"
+      environment: "{{ podman_common_env }}"
       register: create_result
 
     - name: Show create stdout
@@ -250,6 +233,10 @@
       ansible.builtin.shell: |
         set -o pipefail
         {{ podman_bin }} build \
+          --storage-driver=vfs \
+          --root "{{ podman_graphroot }}" \
+          --runroot "{{ podman_runroot }}" \
+          --tmpdir "{{ podman_tmpdir }}" \
           --tls-verify=false \
           -f context/Containerfile \
           -t {{ target_image_full }} \
@@ -257,11 +244,7 @@
       args:
         executable: /bin/bash
         chdir: "{{ build_dir }}"
-      environment:
-        PATH: "{{ ee_runtime_path }}"
-        HOME: "{{ podman_home }}"
-        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
-        TMPDIR: "{{ podman_tmpdir }}"
+      environment: "{{ podman_common_env }}"
       register: build_result
       changed_when: true
       failed_when: false
@@ -301,15 +284,14 @@
       ansible.builtin.shell: |
         set -o pipefail
         {{ podman_bin }} push \
+          --storage-driver=vfs \
+          --root "{{ podman_graphroot }}" \
+          --runroot "{{ podman_runroot }}" \
           --tls-verify=false \
           {{ target_image_full }} 2>&1 | tee {{ push_log_file }}
       args:
         executable: /bin/bash
-      environment:
-        PATH: "{{ ee_runtime_path }}"
-        HOME: "{{ podman_home }}"
-        XDG_RUNTIME_DIR: "{{ podman_runroot }}"
-        TMPDIR: "{{ podman_tmpdir }}"
+      environment: "{{ podman_common_env }}"
       register: push_result
       changed_when: true
       failed_when: false
