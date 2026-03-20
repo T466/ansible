@@ -104,6 +104,21 @@
       ansible.builtin.debug:
         var: git_check.stdout_lines
 
+    - name: Check login to Red Hat registry on builder host
+      ansible.builtin.command:
+        cmd: "{{ podman_bin }} login --get-login registry.redhat.io"
+      register: rh_registry_login
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ builder_host }}"
+
+    - name: Show Red Hat registry login status
+      ansible.builtin.debug:
+        msg:
+          - "registry.redhat.io login rc={{ rh_registry_login.rc }}"
+          - "stdout={{ rh_registry_login.stdout_lines | default([]) }}"
+          - "stderr={{ rh_registry_login.stderr_lines | default([]) }}"
+
     - name: Generate build context with ansible-builder on builder host
       ansible.builtin.command:
         cmd: "{{ ansible_builder_bin }} create -f execution-environment.yml"
@@ -114,6 +129,11 @@
     - name: Show create output
       ansible.builtin.debug:
         var: create_result.stdout_lines
+
+    - name: Show create stderr
+      ansible.builtin.debug:
+        var: create_result.stderr_lines
+      when: create_result.stderr_lines is defined
 
     - name: Show generated Containerfile
       ansible.builtin.command:
@@ -131,16 +151,38 @@
         cmd: >
           {{ podman_bin }} build
           --tls-verify=false
+          --log-level=debug
           -f context/Containerfile
           -t {{ target_image_full }}
           context
         chdir: "{{ build_dir }}"
       register: build_result
       delegate_to: "{{ builder_host }}"
+      failed_when: false
 
-    - name: Show build output
+    - name: Show build rc
+      ansible.builtin.debug:
+        msg: "build rc={{ build_result.rc }}"
+
+    - name: Show build stdout
       ansible.builtin.debug:
         var: build_result.stdout_lines
+
+    - name: Show build stderr
+      ansible.builtin.debug:
+        var: build_result.stderr_lines
+
+    - name: Show last 80 lines of build stderr
+      ansible.builtin.debug:
+        msg: "{{ build_result.stderr_lines[-80:] }}"
+      when:
+        - build_result.stderr_lines is defined
+        - build_result.stderr_lines | length > 0
+
+    - name: Fail if build failed
+      ansible.builtin.fail:
+        msg: "Falha no podman build. Veja as últimas linhas do stderr acima."
+      when: build_result.rc != 0
 
     - name: Push EE to registry from builder host
       ansible.builtin.command:
@@ -154,6 +196,11 @@
     - name: Show push output
       ansible.builtin.debug:
         var: push_result.stdout_lines
+
+    - name: Show push stderr
+      ansible.builtin.debug:
+        var: push_result.stderr_lines
+      when: push_result.stderr_lines is defined
 
     - name: Final result
       ansible.builtin.debug:
