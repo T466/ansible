@@ -16,7 +16,6 @@
     ansible_builder_bin: "/usr/local/bin/ansible-builder"
     podman_bin: "/usr/bin/podman"
     git_bin: "/usr/bin/git"
-    podman_registries_conf: "/etc/containers/registries.conf"
 
   tasks:
     - name: Create build directory
@@ -40,7 +39,6 @@
         msg:
           - "builder_image={{ builder_image }}"
           - "target_image_full={{ target_image_full }}"
-          - "CONTAINERS_REGISTRIES_CONF={{ podman_registries_conf }}"
 
     - name: Show generated execution-environment.yml
       ansible.builtin.command:
@@ -58,7 +56,6 @@
         executable: /bin/bash
       environment:
         PATH: "{{ ee_runtime_path }}"
-        CONTAINERS_REGISTRIES_CONF: "{{ podman_registries_conf }}"
       register: ee_path
       changed_when: false
 
@@ -71,7 +68,6 @@
         executable: /bin/bash
       environment:
         PATH: "{{ ee_runtime_path }}"
-        CONTAINERS_REGISTRIES_CONF: "{{ podman_registries_conf }}"
       register: ansible_builder_check
       changed_when: false
       failed_when: false
@@ -85,7 +81,6 @@
         executable: /bin/bash
       environment:
         PATH: "{{ ee_runtime_path }}"
-        CONTAINERS_REGISTRIES_CONF: "{{ podman_registries_conf }}"
       register: podman_check
       changed_when: false
       failed_when: false
@@ -99,7 +94,6 @@
         executable: /bin/bash
       environment:
         PATH: "{{ ee_runtime_path }}"
-        CONTAINERS_REGISTRIES_CONF: "{{ podman_registries_conf }}"
       register: git_check
       changed_when: false
       failed_when: false
@@ -133,13 +127,44 @@
         msg: "git não está disponível dentro do Execution Environment ee-builder"
       when: git_check.rc != 0
 
-    - name: Build Execution Environment
+    - name: Generate build context with ansible-builder
       ansible.builtin.command:
-        cmd: "{{ ansible_builder_bin }} build -f execution-environment.yml -t {{ target_image_full }}"
+        cmd: "{{ ansible_builder_bin }} create -f execution-environment.yml"
         chdir: "/tmp/{{ target_ee_name }}"
       environment:
         PATH: "{{ ee_runtime_path }}"
-        CONTAINERS_REGISTRIES_CONF: "{{ podman_registries_conf }}"
+      register: create_result
+
+    - name: Show create stdout
+      ansible.builtin.debug:
+        var: create_result.stdout_lines
+
+    - name: Show create stderr
+      ansible.builtin.debug:
+        var: create_result.stderr_lines
+      when: create_result.stderr_lines is defined
+
+    - name: Show generated Containerfile
+      ansible.builtin.command:
+        cmd: cat "/tmp/{{ target_ee_name }}/context/Containerfile"
+      register: containerfile_result
+      changed_when: false
+
+    - name: Display generated Containerfile
+      ansible.builtin.debug:
+        var: containerfile_result.stdout_lines
+
+    - name: Build Execution Environment with podman
+      ansible.builtin.command:
+        cmd: >-
+          {{ podman_bin }} build
+          --tls-verify=false
+          -f context/Containerfile
+          -t {{ target_image_full }}
+          context
+        chdir: "/tmp/{{ target_ee_name }}"
+      environment:
+        PATH: "{{ ee_runtime_path }}"
       register: build_result
 
     - name: Show build stdout
@@ -156,7 +181,6 @@
         cmd: "{{ podman_bin }} push --tls-verify=false {{ target_image_full }}"
       environment:
         PATH: "{{ ee_runtime_path }}"
-        CONTAINERS_REGISTRIES_CONF: "{{ podman_registries_conf }}"
       register: push_result
 
     - name: Show push stdout
