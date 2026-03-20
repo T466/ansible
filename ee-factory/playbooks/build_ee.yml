@@ -1,63 +1,159 @@
 ---
-- name: EEF connectivity test
+- name: Execution Environment Factory - Build EE
   hosts: localhost
   gather_facts: false
 
   vars:
     builder_host: "{{ builder_host_input | default('192.168.15.20') }}"
 
+    registry_host: "{{ registry_host_input | default('192.168.15.20:5000') }}"
+    target_ee_name: "{{ ee_name_input | default('custom-ee') }}"
+    target_ee_tag: "{{ ee_tag_input | default('1.0') }}"
+    target_collections: "{{ collections_input | default(['community.general']) }}"
+    target_image_full: "{{ registry_host }}/{{ target_ee_name }}:{{ target_ee_tag }}"
+
+    builder_image: "{{ builder_image_input | default('192.168.15.20:5000/ee-builder:1.2') }}"
+    build_dir: "/tmp/{{ target_ee_name }}"
+
+    ansible_builder_bin: "/opt/ee-builder-venv/bin/ansible-builder"
+    podman_bin: "/usr/bin/podman"
+    git_bin: "/usr/bin/git"
+
   tasks:
-    - name: Show selected builder host
+    - name: Show build parameters
       ansible.builtin.debug:
         msg:
           - "builder_host={{ builder_host }}"
+          - "target_image_full={{ target_image_full }}"
+          - "builder_image={{ builder_image }}"
+          - "collections={{ target_collections }}"
+          - "ansible_builder_bin={{ ansible_builder_bin }}"
 
-    - name: Test whoami on builder host
-      ansible.builtin.command:
-        cmd: whoami
-      register: whoami_result
+    - name: Ensure build directory exists on builder host
+      ansible.builtin.file:
+        path: "{{ build_dir }}"
+        state: directory
+        mode: "0755"
       delegate_to: "{{ builder_host }}"
 
-    - name: Show whoami result
-      ansible.builtin.debug:
-        var: whoami_result.stdout_lines
-
-    - name: Test hostname on builder host
-      ansible.builtin.command:
-        cmd: hostname
-      register: hostname_result
+    - name: Generate requirements.yml on builder host
+      ansible.builtin.template:
+        src: ../templates/requirements.yml.j2
+        dest: "{{ build_dir }}/requirements.yml"
       delegate_to: "{{ builder_host }}"
 
-    - name: Show hostname result
-      ansible.builtin.debug:
-        var: hostname_result.stdout_lines
-
-    - name: Test podman version on builder host
-      ansible.builtin.command:
-        cmd: podman --version
-      register: podman_result
+    - name: Generate execution-environment.yml on builder host
+      ansible.builtin.template:
+        src: ../templates/execution-environment.yml.j2
+        dest: "{{ build_dir }}/execution-environment.yml"
       delegate_to: "{{ builder_host }}"
 
-    - name: Show podman version
-      ansible.builtin.debug:
-        var: podman_result.stdout_lines
-
-    - name: Test ansible-builder version on builder host
+    - name: Show execution-environment.yml
       ansible.builtin.command:
-        cmd: ansible-builder --version
-      register: ansible_builder_result
+        cmd: cat "{{ build_dir }}/execution-environment.yml"
+      register: ee_file
+      changed_when: false
+      delegate_to: "{{ builder_host }}"
+
+    - name: Display execution-environment.yml
+      ansible.builtin.debug:
+        var: ee_file.stdout_lines
+
+    - name: Check ansible-builder binary exists on builder host
+      ansible.builtin.command:
+        cmd: ls -l "{{ ansible_builder_bin }}"
+      register: ansible_builder_bin_check
+      changed_when: false
+      delegate_to: "{{ builder_host }}"
+
+    - name: Show ansible-builder binary path
+      ansible.builtin.debug:
+        var: ansible_builder_bin_check.stdout_lines
+
+    - name: Check ansible-builder version on builder host
+      ansible.builtin.command:
+        cmd: "{{ ansible_builder_bin }} --version"
+      register: ansible_builder_check
+      changed_when: false
       delegate_to: "{{ builder_host }}"
 
     - name: Show ansible-builder version
       ansible.builtin.debug:
-        var: ansible_builder_result.stdout_lines
+        var: ansible_builder_check.stdout_lines
 
-    - name: Test git version on builder host
+    - name: Check podman on builder host
       ansible.builtin.command:
-        cmd: git --version
-      register: git_result
+        cmd: "{{ podman_bin }} --version"
+      register: podman_check
+      changed_when: false
+      delegate_to: "{{ builder_host }}"
+
+    - name: Show podman version
+      ansible.builtin.debug:
+        var: podman_check.stdout_lines
+
+    - name: Check git on builder host
+      ansible.builtin.command:
+        cmd: "{{ git_bin }} --version"
+      register: git_check
+      changed_when: false
       delegate_to: "{{ builder_host }}"
 
     - name: Show git version
       ansible.builtin.debug:
-        var: git_result.stdout_lines
+        var: git_check.stdout_lines
+
+    - name: Generate build context with ansible-builder on builder host
+      ansible.builtin.command:
+        cmd: "{{ ansible_builder_bin }} create -f execution-environment.yml"
+        chdir: "{{ build_dir }}"
+      register: create_result
+      delegate_to: "{{ builder_host }}"
+
+    - name: Show create output
+      ansible.builtin.debug:
+        var: create_result.stdout_lines
+
+    - name: Show generated Containerfile
+      ansible.builtin.command:
+        cmd: cat "{{ build_dir }}/context/Containerfile"
+      register: containerfile
+      changed_when: false
+      delegate_to: "{{ builder_host }}"
+
+    - name: Display Containerfile
+      ansible.builtin.debug:
+        var: containerfile.stdout_lines
+
+    - name: Build EE on builder host
+      ansible.builtin.command:
+        cmd: >
+          {{ podman_bin }} build
+          --tls-verify=false
+          -f context/Containerfile
+          -t {{ target_image_full }}
+          context
+        chdir: "{{ build_dir }}"
+      register: build_result
+      delegate_to: "{{ builder_host }}"
+
+    - name: Show build output
+      ansible.builtin.debug:
+        var: build_result.stdout_lines
+
+    - name: Push EE to registry from builder host
+      ansible.builtin.command:
+        cmd: >
+          {{ podman_bin }} push
+          --tls-verify=false
+          {{ target_image_full }}
+      register: push_result
+      delegate_to: "{{ builder_host }}"
+
+    - name: Show push output
+      ansible.builtin.debug:
+        var: push_result.stdout_lines
+
+    - name: Final result
+      ansible.builtin.debug:
+        msg: "EE {{ target_image_full }} built and pushed successfully"
