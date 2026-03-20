@@ -12,7 +12,8 @@
     target_collections: "{{ collections_input | default(['community.general']) }}"
     target_image_full: "{{ registry_host }}/{{ target_ee_name }}:{{ target_ee_tag }}"
 
-    builder_image: "{{ builder_image_input | default('192.168.15.20:5000/ee-builder:1.2') }}"
+    target_base_image: "{{ target_base_image_input | default('registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8:latest') }}"
+
     build_dir: "/tmp/{{ target_ee_name }}"
 
     ansible_builder_bin: "/opt/ee-builder-venv/bin/ansible-builder"
@@ -25,7 +26,7 @@
         msg:
           - "builder_host={{ builder_host }}"
           - "target_image_full={{ target_image_full }}"
-          - "builder_image={{ builder_image }}"
+          - "target_base_image={{ target_base_image }}"
           - "collections={{ target_collections }}"
           - "ansible_builder_bin={{ ansible_builder_bin }}"
 
