@@ -10,6 +10,11 @@
     target_collections: "{{ collections_input | default(['community.general']) }}"
     target_image_full: "{{ registry_host }}/{{ target_ee_name }}:{{ target_ee_tag }}"
 
+    ee_runtime_path: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    ansible_builder_bin: "/usr/local/bin/ansible-builder"
+    podman_bin: "/usr/bin/podman"
+    git_bin: "/usr/bin/git"
+
   tasks:
     - name: Create build directory
       ansible.builtin.file:
@@ -28,19 +33,50 @@
         dest: "/tmp/{{ target_ee_name }}/execution-environment.yml"
 
     - name: Show PATH
-      ansible.builtin.shell: 'echo $PATH'
+      ansible.builtin.shell: 'echo "$PATH"'
+      args:
+        executable: /bin/bash
+      environment:
+        PATH: "{{ ee_runtime_path }}"
       register: ee_path
       changed_when: false
 
     - name: Check ansible-builder
-      ansible.builtin.shell: 'which ansible-builder'
+      ansible.builtin.shell: |
+        set -o pipefail
+        command -v ansible-builder
+        {{ ansible_builder_bin }} --version
+      args:
+        executable: /bin/bash
+      environment:
+        PATH: "{{ ee_runtime_path }}"
       register: ansible_builder_check
       changed_when: false
       failed_when: false
 
     - name: Check podman
-      ansible.builtin.shell: 'which podman'
+      ansible.builtin.shell: |
+        set -o pipefail
+        command -v podman
+        {{ podman_bin }} --version
+      args:
+        executable: /bin/bash
+      environment:
+        PATH: "{{ ee_runtime_path }}"
       register: podman_check
+      changed_when: false
+      failed_when: false
+
+    - name: Check git
+      ansible.builtin.shell: |
+        set -o pipefail
+        command -v git
+        {{ git_bin }} --version
+      args:
+        executable: /bin/bash
+      environment:
+        PATH: "{{ ee_runtime_path }}"
+      register: git_check
       changed_when: false
       failed_when: false
 
@@ -48,19 +84,33 @@
       ansible.builtin.debug:
         msg:
           - "PATH={{ ee_path.stdout }}"
-          - "ansible-builder={{ ansible_builder_check.stdout | default('NOT_FOUND') }}"
-          - "podman={{ podman_check.stdout | default('NOT_FOUND') }}"
+          - "ansible-builder rc={{ ansible_builder_check.rc }}"
+          - "ansible-builder stdout={{ ansible_builder_check.stdout_lines | default([]) }}"
+          - "ansible-builder stderr={{ ansible_builder_check.stderr_lines | default([]) }}"
+          - "podman rc={{ podman_check.rc }}"
+          - "podman stdout={{ podman_check.stdout_lines | default([]) }}"
+          - "podman stderr={{ podman_check.stderr_lines | default([]) }}"
+          - "git rc={{ git_check.rc }}"
+          - "git stdout={{ git_check.stdout_lines | default([]) }}"
+          - "git stderr={{ git_check.stderr_lines | default([]) }}"
           - "target_image_full={{ target_image_full }}"
 
     - name: Fail if ansible-builder is missing
       ansible.builtin.fail:
         msg: "ansible-builder não está disponível dentro do Execution Environment ee-builder"
-      when: ansible_builder_check.stdout | trim == ""
+      when: ansible_builder_check.rc != 0
+
+    - name: Fail if podman is missing
+      ansible.builtin.fail:
+        msg: "podman não está disponível dentro do Execution Environment ee-builder"
+      when: podman_check.rc != 0
 
     - name: Build Execution Environment
       ansible.builtin.command:
-        cmd: ansible-builder build -f execution-environment.yml -t {{ target_image_full }}
+        cmd: "{{ ansible_builder_bin }} build -f execution-environment.yml -t {{ target_image_full }}"
         chdir: "/tmp/{{ target_ee_name }}"
+      environment:
+        PATH: "{{ ee_runtime_path }}"
       register: build_result
 
     - name: Show build stdout
@@ -69,7 +119,9 @@
 
     - name: Push Execution Environment to local registry
       ansible.builtin.command:
-        cmd: podman push --tls-verify=false {{ target_image_full }}
+        cmd: "{{ podman_bin }} push --tls-verify=false {{ target_image_full }}"
+      environment:
+        PATH: "{{ ee_runtime_path }}"
       register: push_result
 
     - name: Show push stdout
