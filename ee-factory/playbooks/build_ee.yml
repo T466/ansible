@@ -132,6 +132,18 @@
         msg: "git não está disponível dentro do Execution Environment ee-builder"
       when: git_check.rc != 0
 
+    - name: Show local images before build
+      ansible.builtin.command:
+        cmd: "{{ podman_bin }} images"
+      environment:
+        PATH: "{{ ee_runtime_path }}"
+      register: podman_images_result
+      changed_when: false
+
+    - name: Display local images before build
+      ansible.builtin.debug:
+        var: podman_images_result.stdout_lines
+
     - name: Generate build context with ansible-builder
       ansible.builtin.command:
         cmd: "{{ ansible_builder_bin }} create -f execution-environment.yml"
@@ -192,7 +204,7 @@
 
     - name: Show tail of build log
       ansible.builtin.command:
-        cmd: tail -n 120 "{{ build_log_file }}"
+        cmd: tail -n 300 "{{ build_log_file }}"
       register: build_log_tail
       changed_when: false
       when: build_result.rc != 0
@@ -237,7 +249,7 @@
 
     - name: Show tail of push log
       ansible.builtin.command:
-        cmd: tail -n 120 "{{ push_log_file }}"
+        cmd: tail -n 300 "{{ push_log_file }}"
       register: push_log_tail
       changed_when: false
       when: push_result.rc != 0
