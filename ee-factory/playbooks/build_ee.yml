@@ -17,32 +17,37 @@
     podman_bin: "/usr/bin/podman"
     git_bin: "/usr/bin/git"
 
+    build_dir: "/tmp/{{ target_ee_name }}"
+    build_log_file: "{{ build_dir }}/podman-build.log"
+    push_log_file: "{{ build_dir }}/podman-push.log"
+
   tasks:
     - name: Create build directory
       ansible.builtin.file:
-        path: "/tmp/{{ target_ee_name }}"
+        path: "{{ build_dir }}"
         state: directory
         mode: "0755"
 
     - name: Generate requirements.yml
       ansible.builtin.template:
         src: ../templates/requirements.yml.j2
-        dest: "/tmp/{{ target_ee_name }}/requirements.yml"
+        dest: "{{ build_dir }}/requirements.yml"
 
     - name: Generate execution-environment.yml
       ansible.builtin.template:
         src: ../templates/execution-environment.yml.j2
-        dest: "/tmp/{{ target_ee_name }}/execution-environment.yml"
+        dest: "{{ build_dir }}/execution-environment.yml"
 
     - name: Show selected builder image
       ansible.builtin.debug:
         msg:
           - "builder_image={{ builder_image }}"
           - "target_image_full={{ target_image_full }}"
+          - "build_dir={{ build_dir }}"
 
     - name: Show generated execution-environment.yml
       ansible.builtin.command:
-        cmd: cat "/tmp/{{ target_ee_name }}/execution-environment.yml"
+        cmd: cat "{{ build_dir }}/execution-environment.yml"
       register: generated_ee_file
       changed_when: false
 
@@ -130,7 +135,7 @@
     - name: Generate build context with ansible-builder
       ansible.builtin.command:
         cmd: "{{ ansible_builder_bin }} create -f execution-environment.yml"
-        chdir: "/tmp/{{ target_ee_name }}"
+        chdir: "{{ build_dir }}"
       environment:
         PATH: "{{ ee_runtime_path }}"
       register: create_result
@@ -146,7 +151,7 @@
 
     - name: Show generated Containerfile
       ansible.builtin.command:
-        cmd: cat "/tmp/{{ target_ee_name }}/context/Containerfile"
+        cmd: cat "{{ build_dir }}/context/Containerfile"
       register: containerfile_result
       changed_when: false
 
@@ -154,43 +159,98 @@
       ansible.builtin.debug:
         var: containerfile_result.stdout_lines
 
+    - name: Remove previous build log
+      ansible.builtin.file:
+        path: "{{ build_log_file }}"
+        state: absent
+
     - name: Build Execution Environment with podman
-      ansible.builtin.command:
-        cmd: >-
-          {{ podman_bin }} build
-          --tls-verify=false
-          -f context/Containerfile
-          -t {{ target_image_full }}
-          context
-        chdir: "/tmp/{{ target_ee_name }}"
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ podman_bin }} build \
+          --tls-verify=false \
+          -f context/Containerfile \
+          -t {{ target_image_full }} \
+          context 2>&1 | tee {{ build_log_file }}
+      args:
+        executable: /bin/bash
+        chdir: "{{ build_dir }}"
       environment:
         PATH: "{{ ee_runtime_path }}"
       register: build_result
+      changed_when: true
+      failed_when: false
+
+    - name: Show build rc
+      ansible.builtin.debug:
+        msg: "podman build rc={{ build_result.rc }}"
 
     - name: Show build stdout
       ansible.builtin.debug:
         var: build_result.stdout_lines
+      when: build_result.stdout_lines is defined
 
-    - name: Show build stderr
+    - name: Show tail of build log
+      ansible.builtin.command:
+        cmd: tail -n 120 "{{ build_log_file }}"
+      register: build_log_tail
+      changed_when: false
+      when: build_result.rc != 0
+
+    - name: Display tail of build log
       ansible.builtin.debug:
-        var: build_result.stderr_lines
-      when: build_result.stderr_lines is defined
+        var: build_log_tail.stdout_lines
+      when: build_result.rc != 0
+
+    - name: Fail if podman build failed
+      ansible.builtin.fail:
+        msg: "Falha no podman build. Verifique o tail do log exibido acima."
+      when: build_result.rc != 0
+
+    - name: Remove previous push log
+      ansible.builtin.file:
+        path: "{{ push_log_file }}"
+        state: absent
 
     - name: Push Execution Environment to local registry
-      ansible.builtin.command:
-        cmd: "{{ podman_bin }} push --tls-verify=false {{ target_image_full }}"
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ podman_bin }} push \
+          --tls-verify=false \
+          {{ target_image_full }} 2>&1 | tee {{ push_log_file }}
+      args:
+        executable: /bin/bash
       environment:
         PATH: "{{ ee_runtime_path }}"
       register: push_result
+      changed_when: true
+      failed_when: false
+
+    - name: Show push rc
+      ansible.builtin.debug:
+        msg: "podman push rc={{ push_result.rc }}"
 
     - name: Show push stdout
       ansible.builtin.debug:
         var: push_result.stdout_lines
+      when: push_result.stdout_lines is defined
 
-    - name: Show push stderr
+    - name: Show tail of push log
+      ansible.builtin.command:
+        cmd: tail -n 120 "{{ push_log_file }}"
+      register: push_log_tail
+      changed_when: false
+      when: push_result.rc != 0
+
+    - name: Display tail of push log
       ansible.builtin.debug:
-        var: push_result.stderr_lines
-      when: push_result.stderr_lines is defined
+        var: push_log_tail.stdout_lines
+      when: push_result.rc != 0
+
+    - name: Fail if podman push failed
+      ansible.builtin.fail:
+        msg: "Falha no podman push. Verifique o tail do log exibido acima."
+      when: push_result.rc != 0
 
     - name: Show final result
       ansible.builtin.debug:
