@@ -10,6 +10,8 @@
     target_collections: "{{ collections_input | default(['community.general']) }}"
     target_image_full: "{{ registry_host }}/{{ target_ee_name }}:{{ target_ee_tag }}"
 
+    builder_image: "{{ builder_image_input | default('192.168.15.20:5000/ee-builder:1.2') }}"
+
     ee_runtime_path: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     ansible_builder_bin: "/usr/local/bin/ansible-builder"
     podman_bin: "/usr/bin/podman"
@@ -32,6 +34,23 @@
       ansible.builtin.template:
         src: ../templates/execution-environment.yml.j2
         dest: "/tmp/{{ target_ee_name }}/execution-environment.yml"
+
+    - name: Show selected builder image
+      ansible.builtin.debug:
+        msg:
+          - "builder_image={{ builder_image }}"
+          - "target_image_full={{ target_image_full }}"
+          - "CONTAINERS_REGISTRIES_CONF={{ podman_registries_conf }}"
+
+    - name: Show generated execution-environment.yml
+      ansible.builtin.command:
+        cmd: cat "/tmp/{{ target_ee_name }}/execution-environment.yml"
+      register: generated_ee_file
+      changed_when: false
+
+    - name: Display generated execution-environment.yml
+      ansible.builtin.debug:
+        var: generated_ee_file.stdout_lines
 
     - name: Show PATH
       ansible.builtin.shell: 'echo "$PATH"'
@@ -98,8 +117,6 @@
           - "git rc={{ git_check.rc }}"
           - "git stdout={{ git_check.stdout_lines | default([]) }}"
           - "git stderr={{ git_check.stderr_lines | default([]) }}"
-          - "target_image_full={{ target_image_full }}"
-          - "CONTAINERS_REGISTRIES_CONF={{ podman_registries_conf }}"
 
     - name: Fail if ansible-builder is missing
       ansible.builtin.fail:
