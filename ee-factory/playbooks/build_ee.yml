@@ -15,6 +15,8 @@
     target_base_image: "{{ target_base_image_input | default('registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8:latest') }}"
 
     build_dir: "/tmp/{{ target_ee_name }}"
+    build_log_file: "{{ build_dir }}/podman-build.log"
+    push_log_file: "{{ build_dir }}/podman-push.log"
 
     ansible_builder_bin: "/opt/ee-builder-venv/bin/ansible-builder"
     podman_bin: "/usr/bin/podman"
@@ -146,19 +148,28 @@
       ansible.builtin.debug:
         var: containerfile.stdout_lines
 
+    - name: Remove previous build log
+      ansible.builtin.file:
+        path: "{{ build_log_file }}"
+        state: absent
+      delegate_to: "{{ builder_host }}"
+
     - name: Build EE on builder host
-      ansible.builtin.command:
-        cmd: >
-          {{ podman_bin }} build
-          --tls-verify=false
-          --log-level=debug
-          -f context/Containerfile
-          -t {{ target_image_full }}
-          context
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ podman_bin }} build \
+          --tls-verify=false \
+          --log-level=debug \
+          -f context/Containerfile \
+          -t {{ target_image_full }} \
+          context 2>&1 | tee {{ build_log_file }}
+      args:
+        executable: /bin/bash
         chdir: "{{ build_dir }}"
       register: build_result
       delegate_to: "{{ builder_host }}"
       failed_when: false
+      changed_when: true
 
     - name: Show build rc
       ansible.builtin.debug:
@@ -167,40 +178,71 @@
     - name: Show build stdout
       ansible.builtin.debug:
         var: build_result.stdout_lines
+      when: build_result.stdout_lines is defined
 
-    - name: Show build stderr
-      ansible.builtin.debug:
-        var: build_result.stderr_lines
+    - name: Show last 120 lines of build log
+      ansible.builtin.command:
+        cmd: tail -n 120 "{{ build_log_file }}"
+      register: build_log_tail
+      changed_when: false
+      delegate_to: "{{ builder_host }}"
+      when: build_result.rc != 0
 
-    - name: Show last 80 lines of build stderr
+    - name: Display last 120 lines of build log
       ansible.builtin.debug:
-        msg: "{{ build_result.stderr_lines[-80:] }}"
-      when:
-        - build_result.stderr_lines is defined
-        - build_result.stderr_lines | length > 0
+        var: build_log_tail.stdout_lines
+      when: build_result.rc != 0
 
     - name: Fail if build failed
       ansible.builtin.fail:
-        msg: "Falha no podman build. Veja as últimas linhas do stderr acima."
+        msg: "Falha no podman build. Veja o tail do log acima."
       when: build_result.rc != 0
 
-    - name: Push EE to registry from builder host
-      ansible.builtin.command:
-        cmd: >
-          {{ podman_bin }} push
-          --tls-verify=false
-          {{ target_image_full }}
-      register: push_result
+    - name: Remove previous push log
+      ansible.builtin.file:
+        path: "{{ push_log_file }}"
+        state: absent
       delegate_to: "{{ builder_host }}"
 
-    - name: Show push output
+    - name: Push EE to registry from builder host
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ podman_bin }} push \
+          --tls-verify=false \
+          {{ target_image_full }} 2>&1 | tee {{ push_log_file }}
+      args:
+        executable: /bin/bash
+      register: push_result
+      delegate_to: "{{ builder_host }}"
+      failed_when: false
+      changed_when: true
+
+    - name: Show push rc
+      ansible.builtin.debug:
+        msg: "push rc={{ push_result.rc }}"
+
+    - name: Show push stdout
       ansible.builtin.debug:
         var: push_result.stdout_lines
+      when: push_result.stdout_lines is defined
 
-    - name: Show push stderr
+    - name: Show last 80 lines of push log
+      ansible.builtin.command:
+        cmd: tail -n 80 "{{ push_log_file }}"
+      register: push_log_tail
+      changed_when: false
+      delegate_to: "{{ builder_host }}"
+      when: push_result.rc != 0
+
+    - name: Display last 80 lines of push log
       ansible.builtin.debug:
-        var: push_result.stderr_lines
-      when: push_result.stderr_lines is defined
+        var: push_log_tail.stdout_lines
+      when: push_result.rc != 0
+
+    - name: Fail if push failed
+      ansible.builtin.fail:
+        msg: "Falha no podman push. Veja o tail do log acima."
+      when: push_result.rc != 0
 
     - name: Final result
       ansible.builtin.debug:
