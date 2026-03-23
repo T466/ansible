@@ -1,0 +1,6 @@
+ee_name_input: ee-awx
+ee_tag_input: "1.0"
+
+collections_input:
+  - community.general
+  - awx.awx
