@@ -12,13 +12,11 @@
     target_collections: "{{ collections_input | default(['community.general']) }}"
     target_image_full: "{{ registry_host }}/{{ target_ee_name }}:{{ target_ee_tag }}"
 
-    target_base_image: "{{ target_base_image_input | default('registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8:latest') }}"
+    target_base_image: "{{ target_base_image_input | default('registry.redhat.io/ansible-automation-platform-25/ee-minimal-rhel8:latest') }}"
 
     build_dir: "/tmp/{{ target_ee_name }}"
     build_log_file: "{{ build_dir }}/podman-build.log"
     push_log_file: "{{ build_dir }}/podman-push.log"
-    generated_pip_requirements: "{{ build_dir }}/context/_build/requirements.txt"
-    generated_bindep: "{{ build_dir }}/context/_build/bindep.txt"
 
     ansible_builder_bin: "/opt/ee-builder-venv/bin/ansible-builder"
     podman_bin: "/usr/bin/podman"
@@ -34,7 +32,13 @@
           - "collections={{ target_collections }}"
           - "ansible_builder_bin={{ ansible_builder_bin }}"
 
-    - name: Ensure build directory exists on builder host
+    - name: Remove previous build directory on builder host
+      ansible.builtin.file:
+        path: "{{ build_dir }}"
+        state: absent
+      delegate_to: "{{ builder_host }}"
+
+    - name: Ensure fresh build directory exists on builder host
       ansible.builtin.file:
         path: "{{ build_dir }}"
         state: directory
@@ -139,71 +143,18 @@
         var: create_result.stderr_lines
       when: create_result.stderr_lines is defined
 
-    - name: Show generated pip requirements before cleanup
+    - name: Show generated pip requirements
       ansible.builtin.command:
-        cmd: cat "{{ generated_pip_requirements }}"
+        cmd: cat "{{ build_dir }}/context/_build/requirements.txt"
       register: generated_pip_requirements_result
       changed_when: false
       failed_when: false
       delegate_to: "{{ builder_host }}"
 
-    - name: Display generated pip requirements before cleanup
+    - name: Display generated pip requirements
       ansible.builtin.debug:
         var: generated_pip_requirements_result.stdout_lines
       when: generated_pip_requirements_result.stdout_lines is defined
-
-    - name: Show generated bindep before cleanup
-      ansible.builtin.command:
-        cmd: cat "{{ generated_bindep }}"
-      register: generated_bindep_result
-      changed_when: false
-      failed_when: false
-      delegate_to: "{{ builder_host }}"
-
-    - name: Display generated bindep before cleanup
-      ansible.builtin.debug:
-        var: generated_bindep_result.stdout_lines
-      when: generated_bindep_result.stdout_lines is defined
-
-    - name: Remove duplicated ansible-pylibssh entries from generated pip requirements
-      ansible.builtin.shell: |
-        python3 - <<'PY'
-        from pathlib import Path
-
-        req_file = Path("{{ generated_pip_requirements }}")
-        if not req_file.exists():
-            raise SystemExit(0)
-
-        lines = req_file.read_text().splitlines()
-        new_lines = []
-        ansible_pylibssh_seen = False
-
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith("ansible-pylibssh"):
-                if ansible_pylibssh_seen:
-                    continue
-                ansible_pylibssh_seen = True
-            new_lines.append(line)
-
-        req_file.write_text("\n".join(new_lines) + "\n")
-        PY
-      args:
-        executable: /bin/bash
-      delegate_to: "{{ builder_host }}"
-
-    - name: Show generated pip requirements after cleanup
-      ansible.builtin.command:
-        cmd: cat "{{ generated_pip_requirements }}"
-      register: generated_pip_requirements_after_result
-      changed_when: false
-      failed_when: false
-      delegate_to: "{{ builder_host }}"
-
-    - name: Display generated pip requirements after cleanup
-      ansible.builtin.debug:
-        var: generated_pip_requirements_after_result.stdout_lines
-      when: generated_pip_requirements_after_result.stdout_lines is defined
 
     - name: Show generated Containerfile
       ansible.builtin.command:
