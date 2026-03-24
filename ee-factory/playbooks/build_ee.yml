@@ -302,4 +302,4 @@
         validate_certs: false
         controller_host: https://192.168.15.20
         controller_username: admin
-        controller_password: zaq1ZAQ!
+        controller_password: 123456789
