@@ -291,3 +291,15 @@
     - name: Final result
       ansible.builtin.debug:
         msg: "EE {{ target_image_full }} built and pushed successfully"
+
+
+        - name: Create EE in AAP
+  awx.awx.execution_environment:
+    name: "{{ target_ee_name }}"
+    image: "{{ target_image_full }}"
+    organization: Default
+    state: present
+    validate_certs: false
+    controller_host: https://192.168.15.20
+    controller_username: admin
+    controller_password: zaq1ZAQ!
