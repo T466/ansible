@@ -4,3 +4,17 @@ ee_tag_input: "1.0"
 collections_input:
   - community.general
   - awx.awx
+  - ansible.posix
+  - ansible.utils
+  - azure.azcollection
+  - amazon.aws
+  - community.aws
+  - azure.azcollection
+  - google.cloud
+  - oracle.oci
+  - community.docker
+  - kubernetes.core
+  - containers.podman
+  - community.vmware
+  - ovirt.ovirt
+  - community.libvirt
