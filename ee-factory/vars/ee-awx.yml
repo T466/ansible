@@ -9,7 +9,6 @@ collections_input:
   - azure.azcollection
   - amazon.aws
   - community.aws
-  - azure.azcollection
   - google.cloud
   - oracle.oci
   - community.docker
