@@ -32,6 +32,31 @@
           - "collections={{ target_collections }}"
           - "ansible_builder_bin={{ ansible_builder_bin }}"
 
+
+
+    - name: Normalize collections input from survey or vars file
+      ansible.builtin.set_fact:
+        target_collections: >-
+          {{
+            collections_input
+            if (collections_input is iterable and collections_input is not string)
+            else
+            (
+              (collections_input | default('community.general')).splitlines()
+              | map('trim')
+              | reject('equalto', '')
+              | list
+            )
+          }}
+
+    - name: Show normalized collections
+      ansible.builtin.debug:
+        var: target_collections
+
+
+
+        
+
     - name: Remove previous build directory on builder host
       ansible.builtin.file:
         path: "{{ build_dir }}"
