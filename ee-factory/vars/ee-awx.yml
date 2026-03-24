@@ -17,3 +17,4 @@ collections_input:
   - community.vmware
   - ovirt.ovirt
   - community.libvirt
+  - ibm.ibm_zos_core
