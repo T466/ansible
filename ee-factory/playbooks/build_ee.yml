@@ -32,8 +32,6 @@
           - "collections={{ target_collections }}"
           - "ansible_builder_bin={{ ansible_builder_bin }}"
 
-
-
     - name: Normalize collections input from survey or vars file
       ansible.builtin.set_fact:
         target_collections: >-
@@ -52,10 +50,6 @@
     - name: Show normalized collections
       ansible.builtin.debug:
         var: target_collections
-
-
-
-        
 
     - name: Remove previous build directory on builder host
       ansible.builtin.file:
@@ -291,7 +285,6 @@
     - name: Final result
       ansible.builtin.debug:
         msg: "EE {{ target_image_full }} built and pushed successfully"
-
 
     - name: Create EE in AAP
       awx.awx.execution_environment:
