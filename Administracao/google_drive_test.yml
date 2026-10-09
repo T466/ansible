@@ -1,0 +1,36 @@
+---
+- name: Testar integracao AAP com Google Drive
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Obter Access Token
+      ansible.builtin.uri:
+        url: https://oauth2.googleapis.com/token
+        method: POST
+        body_format: form-urlencoded
+        body:
+          client_id: "{{ lookup('env', 'GOOGLE_CLIENT_ID') }}"
+          client_secret: "{{ lookup('env', 'GOOGLE_CLIENT_SECRET') }}"
+          refresh_token: "{{ lookup('env', 'GOOGLE_REFRESH_TOKEN') }}"
+          grant_type: refresh_token
+        status_code: 200
+      register: oauth_response
+      no_log: true
+
+    - name: Consultar arquivos no Google Drive
+      ansible.builtin.uri:
+        url: https://www.googleapis.com/drive/v3/files
+        method: GET
+        headers:
+          Authorization: "Bearer {{ oauth_response.json.access_token }}"
+        return_content: true
+        status_code: 200
+        body_format: json
+      register: drive_response
+      no_log: true
+
+    - name: Exibir arquivos encontrados
+      ansible.builtin.debug:
+        msg: "{{ drive_response.json.files | default([]) }}"
