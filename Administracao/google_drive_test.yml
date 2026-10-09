@@ -4,75 +4,192 @@
   connection: local
   gather_facts: false
 
+  vars:
+    nome_arquivo: "ips.csv"
+
   tasks:
+
+    # ============================================
+    # ETAPA 1 - VALIDAR CREDENCIAIS
+    # ============================================
 
     - name: Validar credenciais OAuth2
       ansible.builtin.assert:
         that:
-          - lookup('env', 'GOOGLE_CLIENT_ID') | length > 0
-          - lookup('env', 'GOOGLE_CLIENT_SECRET') | length > 0
-          - lookup('env', 'GOOGLE_REFRESH_TOKEN') | length > 0
-        success_msg: "Credenciais OAuth2 disponiveis."
+          - lookup('ansible.builtin.env', 'GOOGLE_CLIENT_ID') | length > 0
+          - lookup('ansible.builtin.env', 'GOOGLE_CLIENT_SECRET') | length > 0
+          - lookup('ansible.builtin.env', 'GOOGLE_REFRESH_TOKEN') | length > 0
+        success_msg: "OK - Credenciais OAuth2 disponiveis."
+        fail_msg: "ERRO - Credenciais OAuth2 nao disponiveis."
+
+    # ============================================
+    # ETAPA 2 - OBTER ACCESS TOKEN
+    # ============================================
 
     - name: Obter Access Token
       ansible.builtin.uri:
-        url: https://oauth2.googleapis.com/token
+        url: "https://oauth2.googleapis.com/token"
         method: POST
         body_format: form-urlencoded
         body:
-          client_id: "{{ lookup('env', 'GOOGLE_CLIENT_ID') }}"
-          client_secret: "{{ lookup('env', 'GOOGLE_CLIENT_SECRET') }}"
-          refresh_token: "{{ lookup('env', 'GOOGLE_REFRESH_TOKEN') }}"
+          client_id: "{{ lookup('ansible.builtin.env', 'GOOGLE_CLIENT_ID') }}"
+          client_secret: "{{ lookup('ansible.builtin.env', 'GOOGLE_CLIENT_SECRET') }}"
+          refresh_token: "{{ lookup('ansible.builtin.env', 'GOOGLE_REFRESH_TOKEN') }}"
           grant_type: refresh_token
         status_code: 200
+        return_content: true
+        timeout: 30
       register: oauth_response
+      failed_when: false
       no_log: true
+
+    - name: Diagnosticar autenticacao OAuth2
+      ansible.builtin.debug:
+        msg:
+          - "HTTP Status: {{ oauth_response.status | default('indisponivel') }}"
+          - "Erro OAuth: {{ oauth_response.json.error | default('nao informado') }}"
+
+    - name: Validar Access Token
+      ansible.builtin.assert:
+        that:
+          - oauth_response.status | default(0) | int == 200
+          - oauth_response.json.access_token is defined
+        success_msg: "OK - Autenticacao OAuth2 realizada."
+        fail_msg: "ERRO - Falha na autenticacao OAuth2."
+      no_log: true
+
+    # ============================================
+    # ETAPA 3 - PROCURAR CSV NO GOOGLE DRIVE
+    # ============================================
 
     - name: Procurar ips.csv no Google Drive
       ansible.builtin.uri:
-        url: https://www.googleapis.com/drive/v3/files
+        url: "https://www.googleapis.com/drive/v3/files"
         method: GET
         headers:
           Authorization: "Bearer {{ oauth_response.json.access_token }}"
-        params:
-          q: "name = 'ips.csv' and trashed = false"
-          fields: "nextPageToken,files(id,name,mimeType)"
-          pageSize: "100"
+          Accept: "application/json"
+        body_format: json
         return_content: true
         status_code: 200
+        timeout: 30
+        url: >-
+          https://www.googleapis.com/drive/v3/files
+          ?q={{ ("name = '" ~ nome_arquivo ~ "' and trashed = false") | urlencode }}
+          &fields={{ "nextPageToken,files(id,name,mimeType,driveId)" | urlencode }}
+          &pageSize=100
+          &supportsAllDrives=true
+          &includeItemsFromAllDrives=true
       register: search_response
+      failed_when: false
       no_log: true
+
+    # ============================================
+    # ETAPA 4 - DIAGNOSTICAR BUSCA
+    # ============================================
+
+    - name: Diagnosticar busca do CSV
+      ansible.builtin.debug:
+        msg:
+          - "HTTP Status: {{ search_response.status | default('indisponivel') }}"
+          - "Erro Google: {{ search_response.json.error.status | default('nao informado') }}"
+          - "Mensagem: {{ search_response.json.error.message | default('nao informada') }}"
+          - "Arquivos encontrados: {{ search_response.json.files | default([]) | length }}"
+
+    - name: Validar consulta Google Drive
+      ansible.builtin.assert:
+        that:
+          - search_response.status | default(0) | int == 200
+        success_msg: "OK - Consulta realizada com sucesso."
+        fail_msg: "ERRO - Falha ao consultar Google Drive."
+
+    # ============================================
+    # ETAPA 5 - VALIDAR ARQUIVO ENCONTRADO
+    # ============================================
+
+    - name: Validar existencia do CSV
+      ansible.builtin.assert:
+        that:
+          - search_response.json.files | default([]) | length > 0
+        success_msg: "OK - Arquivo ips.csv localizado."
+        fail_msg: "ERRO - Arquivo ips.csv nao encontrado."
 
     - name: Exibir arquivos encontrados
       ansible.builtin.debug:
-        msg: "{{ search_response.json.files | default([]) }}"
+        msg: "{{ search_response.json.files }}"
 
-    - name: Validar arquivo encontrado
-      ansible.builtin.assert:
-        that:
-          - search_response.json.files | length > 0
-        fail_msg: "Arquivo ips.csv nao encontrado."
-        success_msg: "Arquivo ips.csv localizado."
-
-    - name: Definir ID do arquivo
+    - name: Definir arquivo CSV
       ansible.builtin.set_fact:
-        arquivo_id: "{{ search_response.json.files[0].id }}"
+        arquivo_csv: "{{ search_response.json.files[0] }}"
+
+    # ============================================
+    # ETAPA 6 - BAIXAR CONTEUDO DO CSV
+    # ============================================
 
     - name: Baixar conteudo do CSV
       ansible.builtin.uri:
-        url: "https://www.googleapis.com/drive/v3/files/{{ arquivo_id }}?alt=media"
+        url: >-
+          https://www.googleapis.com/drive/v3/files/{{ arquivo_csv.id }}
+          ?alt=media&supportsAllDrives=true
         method: GET
         headers:
           Authorization: "Bearer {{ oauth_response.json.access_token }}"
         return_content: true
         status_code: 200
+        timeout: 30
       register: csv_response
+      no_log: true
+      when: arquivo_csv.mimeType == 'text/csv'
+
+    # ============================================
+    # ETAPA 7 - EXPORTAR GOOGLE SHEETS SE NECESSARIO
+    # ============================================
+
+    - name: Exportar planilha Google Sheets como CSV
+      ansible.builtin.uri:
+        url: >-
+          https://www.googleapis.com/drive/v3/files/{{ arquivo_csv.id }}/export
+          ?mimeType=text%2Fcsv
+        method: GET
+        headers:
+          Authorization: "Bearer {{ oauth_response.json.access_token }}"
+        return_content: true
+        status_code: 200
+        timeout: 30
+      register: sheets_response
+      no_log: true
+      when: arquivo_csv.mimeType == 'application/vnd.google-apps.spreadsheet'
+
+    - name: Validar formato do arquivo
+      ansible.builtin.assert:
+        that:
+          - arquivo_csv.mimeType in
+            ['text/csv', 'application/vnd.google-apps.spreadsheet']
+        fail_msg: "Formato nao suportado para leitura CSV."
+        success_msg: "OK - Formato de arquivo suportado."
+
+    # ============================================
+    # ETAPA 8 - EXIBIR CONTEUDO
+    # ============================================
+
+    - name: Definir conteudo CSV
+      ansible.builtin.set_fact:
+        conteudo_csv: >-
+          {{
+            csv_response.content
+            if arquivo_csv.mimeType == 'text/csv'
+            else sheets_response.content
+          }}
       no_log: true
 
     - name: Exibir conteudo do CSV
       ansible.builtin.debug:
-        msg: "{{ csv_response.content.splitlines() }}"
+        msg: "{{ conteudo_csv.splitlines() }}"
+
+    # ============================================
+    # ETAPA 9 - FINALIZAR
+    # ============================================
 
     - name: Finalizar teste
       ansible.builtin.debug:
-        msg: "Leitura do CSV realizada com sucesso."
+        msg: "OK - Arquivo CSV lido pelo AAP com sucesso."
