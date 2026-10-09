@@ -7,7 +7,7 @@
   tasks:
 
     # ============================================
-    # ETAPA 1 - VALIDAR VARIAVEIS OAUTH2
+    # ETAPA 1 - VALIDAR CREDENCIAIS OAUTH2
     # ============================================
 
     - name: Diagnosticar variaveis OAuth2
@@ -25,7 +25,7 @@
 
     - name: Obter Access Token
       ansible.builtin.uri:
-        url: https://oauth2.googleapis.com/token
+        url: "https://oauth2.googleapis.com/token"
         method: POST
         body_format: form-urlencoded
         body:
@@ -41,7 +41,7 @@
       no_log: true
 
     # ============================================
-    # ETAPA 3 - DIAGNOSTICO HTTP
+    # ETAPA 3 - DIAGNOSTICAR AUTENTICACAO
     # ============================================
 
     - name: Diagnosticar resposta HTTP do Google
@@ -56,7 +56,8 @@
         that:
           - oauth_response.status | default(0) | int == 200
           - oauth_response.json.access_token is defined
-        fail_msg: "ERRO - Falha na autenticacao OAuth2. Verifique o diagnostico HTTP."
+          - oauth_response.json.access_token | length > 0
+        fail_msg: "ERRO - Falha na autenticacao OAuth2."
         success_msg: "OK - Access Token obtido com sucesso."
       no_log: true
 
@@ -65,42 +66,53 @@
         msg: "OK - Autenticacao OAuth2 realizada com sucesso."
 
     # ============================================
-    # ETAPA 4 - CONSULTAR GOOGLE DRIVE
+    # ETAPA 4 - CONSULTAR GOOGLE DRIVE API
     # ============================================
 
     - name: Consultar arquivos no Google Drive
       ansible.builtin.uri:
-        url: https://www.googleapis.com/drive/v3/files
+        url: "https://www.googleapis.com/drive/v3/files"
         method: GET
         headers:
           Authorization: "Bearer {{ oauth_response.json.access_token }}"
+          Accept: "application/json"
+        status_code:
+          - 200
+          - 400
+          - 401
+          - 403
         return_content: true
-        status_code: 200
         timeout: 30
-        body_format: json
       register: drive_response
       failed_when: false
       no_log: true
 
     # ============================================
-    # ETAPA 5 - DIAGNOSTICO GOOGLE DRIVE
+    # ETAPA 5 - DIAGNOSTICAR ERRO GOOGLE DRIVE
     # ============================================
 
     - name: Diagnosticar resposta Google Drive
       ansible.builtin.debug:
         msg:
           - "HTTP Status: {{ drive_response.status | default('indisponivel') }}"
+          - "Codigo do erro: {{ drive_response.json.error.code | default('nao informado') }}"
+          - "Status do erro: {{ drive_response.json.error.status | default('nao informado') }}"
+          - "Mensagem do Google: {{ drive_response.json.error.message | default('nao informada') }}"
           - "Arquivos encontrados: {{ drive_response.json.files | default([]) | length }}"
+
+    # ============================================
+    # ETAPA 6 - VALIDAR CONSULTA GOOGLE DRIVE
+    # ============================================
 
     - name: Validar consulta Google Drive
       ansible.builtin.assert:
         that:
           - drive_response.status | default(0) | int == 200
-        fail_msg: "ERRO - Falha ao consultar Google Drive."
+        fail_msg: "ERRO - Falha ao consultar Google Drive. Verifique o diagnostico acima."
         success_msg: "OK - Google Drive API acessada com sucesso."
 
     # ============================================
-    # ETAPA 6 - EXIBIR ARQUIVOS
+    # ETAPA 7 - EXIBIR ARQUIVOS
     # ============================================
 
     - name: Exibir arquivos encontrados
@@ -108,7 +120,7 @@
         msg: "{{ drive_response.json.files | default([]) }}"
 
     # ============================================
-    # ETAPA 7 - FINALIZAR
+    # ETAPA 8 - FINALIZAR
     # ============================================
 
     - name: Finalizar teste
