@@ -5,19 +5,59 @@
   gather_facts: false
 
   tasks:
+
+    # ============================================
+    # ETAPA 1 - DIAGNOSTICO DAS CREDENCIAIS
+    # ============================================
+
+    - name: Diagnosticar variaveis OAuth2
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'GOOGLE_CLIENT_ID') | length > 0
+          - lookup('ansible.builtin.env', 'GOOGLE_CLIENT_SECRET') | length > 0
+          - lookup('ansible.builtin.env', 'GOOGLE_REFRESH_TOKEN') | length > 0
+        fail_msg: "ERRO - Uma ou mais variaveis OAuth2 nao chegaram ao Execution Environment."
+        success_msg: "OK - As tres variaveis OAuth2 estao disponiveis."
+
+    # ============================================
+    # ETAPA 2 - OBTER ACCESS TOKEN
+    # ============================================
+
     - name: Obter Access Token
       ansible.builtin.uri:
         url: https://oauth2.googleapis.com/token
         method: POST
         body_format: form-urlencoded
         body:
-          client_id: "{{ lookup('env', 'GOOGLE_CLIENT_ID') }}"
-          client_secret: "{{ lookup('env', 'GOOGLE_CLIENT_SECRET') }}"
-          refresh_token: "{{ lookup('env', 'GOOGLE_REFRESH_TOKEN') }}"
+          client_id: "{{ lookup('ansible.builtin.env', 'GOOGLE_CLIENT_ID') }}"
+          client_secret: "{{ lookup('ansible.builtin.env', 'GOOGLE_CLIENT_SECRET') }}"
+          refresh_token: "{{ lookup('ansible.builtin.env', 'GOOGLE_REFRESH_TOKEN') }}"
           grant_type: refresh_token
         status_code: 200
+        return_content: true
       register: oauth_response
       no_log: true
+
+    # ============================================
+    # ETAPA 3 - VALIDAR TOKEN
+    # ============================================
+
+    - name: Validar recebimento do Access Token
+      ansible.builtin.assert:
+        that:
+          - oauth_response.json.access_token is defined
+          - oauth_response.json.access_token | length > 0
+        success_msg: "OK - Access Token obtido com sucesso."
+        fail_msg: "ERRO - Access Token nao foi retornado."
+      no_log: true
+
+    - name: Confirmar autenticacao OAuth2
+      ansible.builtin.debug:
+        msg: "OK - Autenticacao OAuth2 concluida."
+
+    # ============================================
+    # ETAPA 4 - CONSULTAR GOOGLE DRIVE
+    # ============================================
 
     - name: Consultar arquivos no Google Drive
       ansible.builtin.uri:
@@ -28,9 +68,19 @@
         return_content: true
         status_code: 200
         body_format: json
+        url_username: ""
+        url_password: ""
       register: drive_response
       no_log: true
+
+    # ============================================
+    # ETAPA 5 - EXIBIR RESULTADO
+    # ============================================
 
     - name: Exibir arquivos encontrados
       ansible.builtin.debug:
         msg: "{{ drive_response.json.files | default([]) }}"
+
+    - name: Finalizar teste
+      ansible.builtin.debug:
+        msg: "OK - Integracao AAP com Google Drive executada."
