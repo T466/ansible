@@ -7,7 +7,7 @@
   tasks:
 
     # ============================================
-    # ETAPA 1 - DIAGNOSTICO DAS CREDENCIAIS
+    # ETAPA 1 - VALIDAR VARIAVEIS OAUTH2
     # ============================================
 
     - name: Diagnosticar variaveis OAuth2
@@ -16,7 +16,7 @@
           - lookup('ansible.builtin.env', 'GOOGLE_CLIENT_ID') | length > 0
           - lookup('ansible.builtin.env', 'GOOGLE_CLIENT_SECRET') | length > 0
           - lookup('ansible.builtin.env', 'GOOGLE_REFRESH_TOKEN') | length > 0
-        fail_msg: "ERRO - Uma ou mais variaveis OAuth2 nao chegaram ao Execution Environment."
+        fail_msg: "ERRO - Variaveis OAuth2 nao disponiveis."
         success_msg: "OK - As tres variaveis OAuth2 estao disponiveis."
 
     # ============================================
@@ -35,25 +35,34 @@
           grant_type: refresh_token
         status_code: 200
         return_content: true
+        timeout: 30
       register: oauth_response
+      failed_when: false
       no_log: true
 
     # ============================================
-    # ETAPA 3 - VALIDAR TOKEN
+    # ETAPA 3 - DIAGNOSTICO HTTP
     # ============================================
 
-    - name: Validar recebimento do Access Token
+    - name: Diagnosticar resposta HTTP do Google
+      ansible.builtin.debug:
+        msg:
+          - "HTTP Status: {{ oauth_response.status | default('indisponivel') }}"
+          - "Erro OAuth: {{ oauth_response.json.error | default('nao informado') }}"
+          - "Tipo de falha: {{ 'HTTP' if (oauth_response.status | default(0) | int) > 0 else 'Conexao ou execucao' }}"
+
+    - name: Validar autenticacao OAuth2
       ansible.builtin.assert:
         that:
+          - oauth_response.status | default(0) | int == 200
           - oauth_response.json.access_token is defined
-          - oauth_response.json.access_token | length > 0
+        fail_msg: "ERRO - Falha na autenticacao OAuth2. Verifique o diagnostico HTTP."
         success_msg: "OK - Access Token obtido com sucesso."
-        fail_msg: "ERRO - Access Token nao foi retornado."
       no_log: true
 
     - name: Confirmar autenticacao OAuth2
       ansible.builtin.debug:
-        msg: "OK - Autenticacao OAuth2 concluida."
+        msg: "OK - Autenticacao OAuth2 realizada com sucesso."
 
     # ============================================
     # ETAPA 4 - CONSULTAR GOOGLE DRIVE
@@ -67,20 +76,41 @@
           Authorization: "Bearer {{ oauth_response.json.access_token }}"
         return_content: true
         status_code: 200
+        timeout: 30
         body_format: json
-        url_username: ""
-        url_password: ""
       register: drive_response
+      failed_when: false
       no_log: true
 
     # ============================================
-    # ETAPA 5 - EXIBIR RESULTADO
+    # ETAPA 5 - DIAGNOSTICO GOOGLE DRIVE
+    # ============================================
+
+    - name: Diagnosticar resposta Google Drive
+      ansible.builtin.debug:
+        msg:
+          - "HTTP Status: {{ drive_response.status | default('indisponivel') }}"
+          - "Arquivos encontrados: {{ drive_response.json.files | default([]) | length }}"
+
+    - name: Validar consulta Google Drive
+      ansible.builtin.assert:
+        that:
+          - drive_response.status | default(0) | int == 200
+        fail_msg: "ERRO - Falha ao consultar Google Drive."
+        success_msg: "OK - Google Drive API acessada com sucesso."
+
+    # ============================================
+    # ETAPA 6 - EXIBIR ARQUIVOS
     # ============================================
 
     - name: Exibir arquivos encontrados
       ansible.builtin.debug:
         msg: "{{ drive_response.json.files | default([]) }}"
 
+    # ============================================
+    # ETAPA 7 - FINALIZAR
+    # ============================================
+
     - name: Finalizar teste
       ansible.builtin.debug:
-        msg: "OK - Integracao AAP com Google Drive executada."
+        msg: "OK - Integracao AAP com Google Drive executada com sucesso."
