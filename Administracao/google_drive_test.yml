@@ -7,6 +7,13 @@
   vars:
     nome_arquivo: "ips.csv"
 
+    google_drive_api: "https://www.googleapis.com/drive/v3"
+
+    query_csv: >-
+      name = '{{ nome_arquivo }}' and trashed = false
+
+    url_busca_csv: "{{ google_drive_api }}/files?q={{ query_csv | urlencode }}&fields={{ 'nextPageToken,files(id,name,mimeType,driveId)' | urlencode }}&pageSize=100&supportsAllDrives=true&includeItemsFromAllDrives=true"
+
   tasks:
 
     # ============================================
@@ -40,23 +47,11 @@
         return_content: true
         timeout: 30
       register: oauth_response
-      failed_when: false
       no_log: true
 
-    - name: Diagnosticar autenticacao OAuth2
+    - name: Confirmar autenticacao OAuth2
       ansible.builtin.debug:
-        msg:
-          - "HTTP Status: {{ oauth_response.status | default('indisponivel') }}"
-          - "Erro OAuth: {{ oauth_response.json.error | default('nao informado') }}"
-
-    - name: Validar Access Token
-      ansible.builtin.assert:
-        that:
-          - oauth_response.status | default(0) | int == 200
-          - oauth_response.json.access_token is defined
-        success_msg: "OK - Autenticacao OAuth2 realizada."
-        fail_msg: "ERRO - Falha na autenticacao OAuth2."
-      no_log: true
+        msg: "OK - Access Token obtido com sucesso."
 
     # ============================================
     # ETAPA 3 - PROCURAR CSV NO GOOGLE DRIVE
@@ -64,22 +59,14 @@
 
     - name: Procurar ips.csv no Google Drive
       ansible.builtin.uri:
-        url: "https://www.googleapis.com/drive/v3/files"
+        url: "{{ url_busca_csv }}"
         method: GET
         headers:
           Authorization: "Bearer {{ oauth_response.json.access_token }}"
           Accept: "application/json"
-        body_format: json
         return_content: true
         status_code: 200
         timeout: 30
-        url: >-
-          https://www.googleapis.com/drive/v3/files
-          ?q={{ ("name = '" ~ nome_arquivo ~ "' and trashed = false") | urlencode }}
-          &fields={{ "nextPageToken,files(id,name,mimeType,driveId)" | urlencode }}
-          &pageSize=100
-          &supportsAllDrives=true
-          &includeItemsFromAllDrives=true
       register: search_response
       failed_when: false
       no_log: true
@@ -92,19 +79,20 @@
       ansible.builtin.debug:
         msg:
           - "HTTP Status: {{ search_response.status | default('indisponivel') }}"
+          - "Mensagem tecnica: {{ search_response.msg | default('nao informada') }}"
           - "Erro Google: {{ search_response.json.error.status | default('nao informado') }}"
-          - "Mensagem: {{ search_response.json.error.message | default('nao informada') }}"
+          - "Mensagem Google: {{ search_response.json.error.message | default('nao informada') }}"
           - "Arquivos encontrados: {{ search_response.json.files | default([]) | length }}"
 
     - name: Validar consulta Google Drive
       ansible.builtin.assert:
         that:
           - search_response.status | default(0) | int == 200
-        success_msg: "OK - Consulta realizada com sucesso."
+        success_msg: "OK - Consulta ao Google Drive realizada."
         fail_msg: "ERRO - Falha ao consultar Google Drive."
 
     # ============================================
-    # ETAPA 5 - VALIDAR ARQUIVO ENCONTRADO
+    # ETAPA 5 - LOCALIZAR ARQUIVO
     # ============================================
 
     - name: Validar existencia do CSV
@@ -118,19 +106,36 @@
       ansible.builtin.debug:
         msg: "{{ search_response.json.files }}"
 
-    - name: Definir arquivo CSV
+    - name: Selecionar arquivo CSV
       ansible.builtin.set_fact:
         arquivo_csv: "{{ search_response.json.files[0] }}"
 
+    - name: Exibir arquivo selecionado
+      ansible.builtin.debug:
+        msg:
+          - "Nome: {{ arquivo_csv.name }}"
+          - "ID: {{ arquivo_csv.id }}"
+          - "MIME Type: {{ arquivo_csv.mimeType }}"
+
     # ============================================
-    # ETAPA 6 - BAIXAR CONTEUDO DO CSV
+    # ETAPA 6 - VALIDAR FORMATO
+    # ============================================
+
+    - name: Validar formato do arquivo
+      ansible.builtin.assert:
+        that:
+          - arquivo_csv.mimeType in
+            ['text/csv', 'application/vnd.google-apps.spreadsheet']
+        fail_msg: "ERRO - O arquivo nao e CSV nem Google Sheets."
+        success_msg: "OK - Formato de arquivo suportado."
+
+    # ============================================
+    # ETAPA 7 - LER CSV ORIGINAL
     # ============================================
 
     - name: Baixar conteudo do CSV
       ansible.builtin.uri:
-        url: >-
-          https://www.googleapis.com/drive/v3/files/{{ arquivo_csv.id }}
-          ?alt=media&supportsAllDrives=true
+        url: "{{ google_drive_api }}/files/{{ arquivo_csv.id }}?alt=media&supportsAllDrives=true"
         method: GET
         headers:
           Authorization: "Bearer {{ oauth_response.json.access_token }}"
@@ -142,14 +147,12 @@
       when: arquivo_csv.mimeType == 'text/csv'
 
     # ============================================
-    # ETAPA 7 - EXPORTAR GOOGLE SHEETS SE NECESSARIO
+    # ETAPA 8 - EXPORTAR GOOGLE SHEETS
     # ============================================
 
-    - name: Exportar planilha Google Sheets como CSV
+    - name: Exportar Google Sheets como CSV
       ansible.builtin.uri:
-        url: >-
-          https://www.googleapis.com/drive/v3/files/{{ arquivo_csv.id }}/export
-          ?mimeType=text%2Fcsv
+        url: "{{ google_drive_api }}/files/{{ arquivo_csv.id }}/export?mimeType=text%2Fcsv"
         method: GET
         headers:
           Authorization: "Bearer {{ oauth_response.json.access_token }}"
@@ -160,36 +163,40 @@
       no_log: true
       when: arquivo_csv.mimeType == 'application/vnd.google-apps.spreadsheet'
 
-    - name: Validar formato do arquivo
-      ansible.builtin.assert:
-        that:
-          - arquivo_csv.mimeType in
-            ['text/csv', 'application/vnd.google-apps.spreadsheet']
-        fail_msg: "Formato nao suportado para leitura CSV."
-        success_msg: "OK - Formato de arquivo suportado."
-
     # ============================================
-    # ETAPA 8 - EXIBIR CONTEUDO
+    # ETAPA 9 - PREPARAR CONTEUDO
     # ============================================
 
-    - name: Definir conteudo CSV
+    - name: Definir conteudo do CSV original
       ansible.builtin.set_fact:
-        conteudo_csv: >-
-          {{
-            csv_response.content
-            if arquivo_csv.mimeType == 'text/csv'
-            else sheets_response.content
-          }}
+        conteudo_csv: "{{ csv_response.content }}"
       no_log: true
+      when: arquivo_csv.mimeType == 'text/csv'
+
+    - name: Definir conteudo exportado do Sheets
+      ansible.builtin.set_fact:
+        conteudo_csv: "{{ sheets_response.content }}"
+      no_log: true
+      when: arquivo_csv.mimeType == 'application/vnd.google-apps.spreadsheet'
+
+    # ============================================
+    # ETAPA 10 - EXIBIR DADOS
+    # ============================================
 
     - name: Exibir conteudo do CSV
       ansible.builtin.debug:
         msg: "{{ conteudo_csv.splitlines() }}"
 
+    - name: Exibir quantidade de registros
+      ansible.builtin.debug:
+        msg: >-
+          Total de registros:
+          {{ (conteudo_csv.splitlines() | length) - 1 }}
+
     # ============================================
-    # ETAPA 9 - FINALIZAR
+    # ETAPA 11 - FINALIZAR
     # ============================================
 
     - name: Finalizar teste
       ansible.builtin.debug:
-        msg: "OK - Arquivo CSV lido pelo AAP com sucesso."
+        msg: "OK - Arquivo ips.csv lido com sucesso pelo AAP."
