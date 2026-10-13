@@ -5,7 +5,7 @@
   gather_facts: false
 
   vars:
-    nome_arquivo: "ips.csv"
+    nome_arquivo: "ips_saida.csv"
 
     google_drive_api: "https://www.googleapis.com/drive/v3"
 
