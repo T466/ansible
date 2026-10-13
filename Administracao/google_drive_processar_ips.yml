@@ -302,3 +302,53 @@
           Arquivo {{ arquivo_entrada }} lido e
           arquivo {{ arquivo_saida }} atualizado
           no Google Drive pelo AAP.
+
+    # ============================================
+    # ETAPA 14 - VALIDACAO POS-GRAVACAO
+    # ============================================
+
+    - name: Ler ips_saida.csv apos atualizacao
+      ansible.builtin.uri:
+        url: "{{ google_drive_api }}/files/{{ id_saida }}?alt=media&supportsAllDrives=true"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ oauth_response.json.access_token }}"
+          Accept: "text/csv"
+        return_content: true
+        status_code: 200
+        timeout: 30
+      register: csv_validacao
+      no_log: true
+
+    - name: Comparar conteudo gravado com conteudo gerado
+      ansible.builtin.assert:
+        that:
+          - csv_validacao.content == csv_final
+        success_msg: >-
+          OK - Validacao concluida.
+          O conteudo gravado no Google Drive
+          corresponde exatamente ao CSV gerado.
+        fail_msg: >-
+          ERRO - O conteudo do arquivo no Google Drive
+          esta diferente do CSV gerado pelo Ansible.
+
+    - name: Validar quantidade de registros gravados
+      ansible.builtin.assert:
+        that:
+          - (csv_validacao.content.splitlines() | length) - 1 == total_linhas | int
+        success_msg: >-
+          OK - Quantidade de registros validada.
+          Total: {{ total_linhas }}
+        fail_msg: >-
+          ERRO - Quantidade de registros divergente.
+
+    - name: Exibir resumo da validacao
+      ansible.builtin.debug:
+        msg:
+          - "Arquivo validado: {{ arquivo_saida }}"
+          - "ID Google Drive: {{ id_saida }}"
+          - "HTTP leitura: {{ csv_validacao.status }}"
+          - "Registros esperados: {{ total_linhas }}"
+          - "Registros encontrados: {{ (csv_validacao.content.splitlines() | length) - 1 }}"
+          - "Integridade do conteudo: OK"
+          - "STATUS FINAL: VALIDADO COM SUCESSO"
