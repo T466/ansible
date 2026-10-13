@@ -8,7 +8,9 @@
   vars:
     arquivo_entrada: "ips.csv"
     arquivo_saida: "ips_saida.csv"
+
     google_drive_api: "https://www.googleapis.com/drive/v3"
+    google_upload_api: "https://www.googleapis.com/upload/drive/v3"
 
   tasks:
 
@@ -19,9 +21,9 @@
     - name: Validar credenciais OAuth2
       ansible.builtin.assert:
         that:
-          - lookup('env', 'GOOGLE_CLIENT_ID') | length > 0
-          - lookup('env', 'GOOGLE_CLIENT_SECRET') | length > 0
-          - lookup('env', 'GOOGLE_REFRESH_TOKEN') | length > 0
+          - lookup('ansible.builtin.env', 'GOOGLE_CLIENT_ID') | length > 0
+          - lookup('ansible.builtin.env', 'GOOGLE_CLIENT_SECRET') | length > 0
+          - lookup('ansible.builtin.env', 'GOOGLE_REFRESH_TOKEN') | length > 0
         success_msg: "OK - Credenciais OAuth2 disponiveis."
         fail_msg: "ERRO - Credenciais OAuth2 indisponiveis."
 
@@ -35,9 +37,9 @@
         method: POST
         body_format: form-urlencoded
         body:
-          client_id: "{{ lookup('env', 'GOOGLE_CLIENT_ID') }}"
-          client_secret: "{{ lookup('env', 'GOOGLE_CLIENT_SECRET') }}"
-          refresh_token: "{{ lookup('env', 'GOOGLE_REFRESH_TOKEN') }}"
+          client_id: "{{ lookup('ansible.builtin.env', 'GOOGLE_CLIENT_ID') }}"
+          client_secret: "{{ lookup('ansible.builtin.env', 'GOOGLE_CLIENT_SECRET') }}"
+          refresh_token: "{{ lookup('ansible.builtin.env', 'GOOGLE_REFRESH_TOKEN') }}"
           grant_type: refresh_token
         status_code: 200
         return_content: true
@@ -50,59 +52,103 @@
         msg: "OK - Access Token obtido."
 
     # ============================================
-    # ETAPA 3 - LOCALIZAR ARQUIVOS
+    # ETAPA 3 - PROCURAR ARQUIVOS CSV
     # ============================================
 
     - name: Procurar arquivos CSV no Google Drive
       ansible.builtin.uri:
-        url: "{{ google_drive_api }}/files"
+        url: >-
+          {{ google_drive_api }}/files?q={{ ("name = '" ~ item ~ "' and trashed = false") | urlencode }}&fields={{ 'nextPageToken,files(id,name,mimeType,parents)' | urlencode }}&pageSize=100&supportsAllDrives=true&includeItemsFromAllDrives=true
         method: GET
         headers:
           Authorization: "Bearer {{ oauth_response.json.access_token }}"
-        params:
-          q: "name = '{{ item }}' and trashed = false"
-          fields: "nextPageToken,files(id,name,mimeType,parents)"
-          pageSize: 100
-          supportsAllDrives: "true"
-          includeItemsFromAllDrives: "true"
+          Accept: "application/json"
         return_content: true
         status_code: 200
         timeout: 30
       loop:
         - "{{ arquivo_entrada }}"
         - "{{ arquivo_saida }}"
+      loop_control:
+        label: "{{ item }}"
       register: busca_arquivos
+      failed_when: false
       no_log: true
 
-    - name: Validar arquivos encontrados
-      ansible.builtin.assert:
-        that:
-          - item.json.files | length == 1
-        fail_msg: >-
-          ERRO - {{ item.item }} nao encontrado
-          ou existem arquivos duplicados.
-        success_msg: "OK - {{ item.item }} localizado."
+    # ============================================
+    # ETAPA 4 - DIAGNOSTICAR BUSCA
+    # ============================================
+
+    - name: Diagnosticar busca dos arquivos
+      ansible.builtin.debug:
+        msg:
+          - "Arquivo: {{ item.item }}"
+          - "HTTP Status: {{ item.status | default('indisponivel') }}"
+          - "Mensagem: {{ item.json.error.message | default(item.msg | default('sem erro informado')) }}"
+          - "Arquivos encontrados: {{ item.json.files | default([]) | length }}"
       loop: "{{ busca_arquivos.results }}"
       loop_control:
         label: "{{ item.item }}"
 
-    - name: Definir IDs dos arquivos
+    - name: Validar consultas Google Drive
+      ansible.builtin.assert:
+        that:
+          - item.status | default(0) | int == 200
+        success_msg: "OK - Consulta realizada para {{ item.item }}."
+        fail_msg: "ERRO - Consulta falhou para {{ item.item }}."
+      loop: "{{ busca_arquivos.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # ============================================
+    # ETAPA 5 - VALIDAR ARQUIVOS
+    # ============================================
+
+    - name: Validar existencia dos arquivos CSV
+      ansible.builtin.assert:
+        that:
+          - item.json.files | default([]) | length == 1
+        success_msg: "OK - Arquivo {{ item.item }} localizado."
+        fail_msg: >-
+          ERRO - Arquivo {{ item.item }} nao encontrado
+          ou existem arquivos duplicados.
+      loop: "{{ busca_arquivos.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Selecionar arquivos
       ansible.builtin.set_fact:
         id_entrada: "{{ busca_arquivos.results[0].json.files[0].id }}"
         id_saida: "{{ busca_arquivos.results[1].json.files[0].id }}"
         mime_entrada: "{{ busca_arquivos.results[0].json.files[0].mimeType }}"
         mime_saida: "{{ busca_arquivos.results[1].json.files[0].mimeType }}"
 
-    - name: Validar formato CSV
+    - name: Exibir arquivos selecionados
+      ansible.builtin.debug:
+        msg:
+          - "Entrada: {{ arquivo_entrada }}"
+          - "ID entrada: {{ id_entrada }}"
+          - "MIME entrada: {{ mime_entrada }}"
+          - "Saida: {{ arquivo_saida }}"
+          - "ID saida: {{ id_saida }}"
+          - "MIME saida: {{ mime_saida }}"
+
+    # ============================================
+    # ETAPA 6 - VALIDAR FORMATO
+    # ============================================
+
+    - name: Validar formato dos arquivos
       ansible.builtin.assert:
         that:
           - mime_entrada == 'text/csv'
           - mime_saida == 'text/csv'
-        fail_msg: "ERRO - Os arquivos precisam ser CSV reais."
-        success_msg: "OK - Ambos os arquivos sao CSV."
+        success_msg: "OK - Arquivos CSV validos."
+        fail_msg: >-
+          ERRO - Os arquivos precisam ser CSV reais,
+          nao planilhas nativas do Google Sheets.
 
     # ============================================
-    # ETAPA 4 - LER ARQUIVO DE ENTRADA
+    # ETAPA 7 - LER ARQUIVO DE ENTRADA
     # ============================================
 
     - name: Baixar ips.csv
@@ -131,44 +177,55 @@
       ansible.builtin.debug:
         var: lista_ips
 
+    - name: Exibir quantidade de IPs
+      ansible.builtin.debug:
+        msg: "Total de IPs encontrados: {{ lista_ips | length }}"
+
     # ============================================
-    # ETAPA 5 - VALIDAR E SEPARAR IPs
+    # ETAPA 8 - VALIDAR ENDERECOS IP
     # ============================================
 
-    - name: Validar formato dos enderecos IP
+    - name: Validar formato dos IPs
       ansible.builtin.assert:
         that:
           - item is match('^[0-9]{1,3}(\.[0-9]{1,3}){3}$')
           - item.split('.') | map('int') | max <= 255
+        success_msg: "OK - IP valido: {{ item }}"
         fail_msg: "ERRO - IP invalido: {{ item }}"
       loop: "{{ lista_ips }}"
+
+    # ============================================
+    # ETAPA 9 - SEPARAR PARES E IMPARES
+    # ============================================
 
     - name: Inicializar listas
       ansible.builtin.set_fact:
         ips_pares: []
         ips_impares: []
 
-    - name: Separar IPs pares
+    - name: Identificar IPs pares
       ansible.builtin.set_fact:
         ips_pares: "{{ ips_pares + [item] }}"
       loop: "{{ lista_ips }}"
       when: (item.split('.')[-1] | int) % 2 == 0
 
-    - name: Separar IPs impares
+    - name: Identificar IPs impares
       ansible.builtin.set_fact:
         ips_impares: "{{ ips_impares + [item] }}"
       loop: "{{ lista_ips }}"
       when: (item.split('.')[-1] | int) % 2 != 0
 
-    - name: Exibir totais
+    - name: Exibir resultado da classificacao
       ansible.builtin.debug:
         msg:
           - "Total de IPs: {{ lista_ips | length }}"
-          - "Pares: {{ ips_pares | length }}"
-          - "Impares: {{ ips_impares | length }}"
+          - "Total pares: {{ ips_pares | length }}"
+          - "Total impares: {{ ips_impares | length }}"
+          - "IPs pares: {{ ips_pares }}"
+          - "IPs impares: {{ ips_impares }}"
 
     # ============================================
-    # ETAPA 6 - MONTAR CSV DE SAIDA
+    # ETAPA 10 - CONSTRUIR CSV DE SAIDA
     # ============================================
 
     - name: Calcular quantidade de linhas
@@ -176,12 +233,12 @@
         total_linhas: >-
           {{ [ips_pares | length, ips_impares | length] | max }}
 
-    - name: Inicializar linhas do CSV
+    - name: Inicializar CSV de saida
       ansible.builtin.set_fact:
         linhas_saida:
           - "titulo,ip_par,ip_impar"
 
-    - name: Construir linhas do CSV
+    - name: Construir registros CSV
       ansible.builtin.set_fact:
         linhas_saida: >-
           {{
@@ -194,7 +251,7 @@
           }}
       loop: "{{ range(0, total_linhas | int) | list }}"
 
-    - name: Preparar conteudo final
+    - name: Preparar conteudo final do CSV
       ansible.builtin.set_fact:
         csv_final: "{{ linhas_saida | join('\n') ~ '\n' }}"
 
@@ -203,12 +260,12 @@
         msg: "{{ csv_final.splitlines() }}"
 
     # ============================================
-    # ETAPA 7 - ATUALIZAR GOOGLE DRIVE
+    # ETAPA 11 - ATUALIZAR GOOGLE DRIVE
     # ============================================
 
     - name: Atualizar ips_saida.csv no Google Drive
       ansible.builtin.uri:
-        url: "https://www.googleapis.com/upload/drive/v3/files/{{ id_saida }}?uploadType=media&supportsAllDrives=true"
+        url: "{{ google_upload_api }}/files/{{ id_saida }}?uploadType=media&supportsAllDrives=true"
         method: PATCH
         headers:
           Authorization: "Bearer {{ oauth_response.json.access_token }}"
@@ -222,13 +279,26 @@
       no_log: true
 
     # ============================================
-    # ETAPA 8 - FINALIZAR
+    # ETAPA 12 - CONFIRMAR ATUALIZACAO
     # ============================================
 
-    - name: Confirmar atualizacao
+    - name: Confirmar atualizacao do CSV
       ansible.builtin.debug:
         msg:
           - "OK - Arquivo {{ arquivo_saida }} atualizado."
+          - "HTTP Status: {{ upload_response.status }}"
           - "Total de IPs processados: {{ lista_ips | length }}"
-          - "Linhas geradas: {{ total_linhas }}"
-          - "ID do arquivo: {{ id_saida }}"
+          - "Total de linhas geradas: {{ total_linhas }}"
+          - "ID do arquivo atualizado: {{ id_saida }}"
+
+    # ============================================
+    # ETAPA 13 - FINALIZAR
+    # ============================================
+
+    - name: Finalizar processamento
+      ansible.builtin.debug:
+        msg: >-
+          OK - Processamento concluido.
+          Arquivo {{ arquivo_entrada }} lido e
+          arquivo {{ arquivo_saida }} atualizado
+          no Google Drive pelo AAP.
